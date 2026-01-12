@@ -157,6 +157,9 @@ import ctypes
 from ctypes import wintypes
 import re
 import win32con
+import pyotp
+import keyring
+import requests
 
 # Try to import psutil for process information
 try:
@@ -221,24 +224,28 @@ USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME = True    # If True: uses default "FINAL FAN
 # ===============================================
 user = getpass.getuser()
 
-def acc(nickname, pluginconfigs_path, include_submarines=True, force247uptime=False):
+def acc(nickname, pluginconfigs_path, include_submarines=True, force247uptime=False, enable_2fa=False, keyring_name=None):
     auto_path = os.path.join(pluginconfigs_path, "AutoRetainer", "DefaultConfig.json")
     return {
         "nickname": nickname,
         "auto_path": auto_path,
         "include_submarines": bool(include_submarines),
         "force247uptime": bool(force247uptime),
+        "enable_2fa": bool(enable_2fa),
+        "keyring_name": keyring_name,
     }
 
 # In the splatoon script: Rename($"{Environment.ProcessId} - nickname"
 # replace 'nickname' with "Main" of "Acc1" keep the space and dash
 
 # # Account configuration - matches AR Parser order
+# # 2FA Configuration: Set enable_2fa=True and keyring_name="your_keyring_name" to enable automatic OTP sending
+# # Keyring setup: Use keyring.set_password("your_keyring_name", "otp_secret", "YOUR_OTP_SECRET_HERE") to store your secret
 account_locations = [
-    acc("Main",   f"C:\\Users\\{user}\\AppData\\Roaming\\XIVLauncher\\pluginConfigs", include_submarines=True, force247uptime=False),
-    # acc("Acc1",   f"C:\\Users\\{user}\\AltData\\Acc1\\pluginConfigs", include_submarines=True, force247uptime=False),
-    # acc("Acc2",   f"C:\\Users\\{user}\\AltData\\Acc2\\pluginConfigs", include_submarines=True, force247uptime=False),
-    # acc("Acc3",   f"C:\\Users\\{user}\\AltData\\Acc3\\pluginConfigs", include_submarines=True, force247uptime=False),
+    acc("Main",   f"C:\\Users\\{user}\\AppData\\Roaming\\XIVLauncher\\pluginConfigs", include_submarines=True, force247uptime=False, enable_2fa=False, keyring_name=None),
+    # acc("Acc1",   f"C:\\Users\\{user}\\AltData\\Acc1\\pluginConfigs", include_submarines=True, force247uptime=False, enable_2fa=True, keyring_name="ffxiv_acc1"),
+    # acc("Acc2",   f"C:\\Users\\{user}\\AltData\\Acc2\\pluginConfigs", include_submarines=True, force247uptime=False, enable_2fa=True, keyring_name="ffxiv_acc2"),
+    # acc("Acc3",   f"C:\\Users\\{user}\\AltData\\Acc3\\pluginConfigs", include_submarines=True, force247uptime=False, enable_2fa=False, keyring_name=None),
 ]
 
 # # Game launcher paths for each account (update these paths to your actual game launchers)
@@ -248,6 +255,9 @@ GAME_LAUNCHERS = {
     # "Acc2":   rf"C:\Users\{user}\AltData\Acc2.bat",
     # "Acc3":   rf"C:\Users\{user}\AltData\Acc3.bat",
 }
+
+# Create account lookup dictionary for quick access to account config by nickname
+ACCOUNT_CONFIG = {acc_data["nickname"]: acc_data for acc_data in account_locations}
 
 # ===============================================
 # Submarine Build Gil Rates (from AR Parser)
@@ -798,22 +808,23 @@ def kill_dalamud_crash_handler_process(pid):
 def launch_game(nickname):
     """
     Launch the game for a specific account using the configured launcher path.
+    If 2FA is enabled for the account, automatically sends the OTP code after launch.
     Returns True if successfully launched, False otherwise.
     """
     launcher_path = GAME_LAUNCHERS.get(nickname)
-    
+
     if not launcher_path:
         print(f"[ERROR] No launcher path configured for {nickname}")
         return False
-    
+
     if not os.path.exists(launcher_path):
         print(f"[ERROR] Launcher not found: {launcher_path}")
         return False
-    
+
     try:
         # Check if it's a batch file
         is_batch_file = launcher_path.lower().endswith('.bat')
-        
+
         if is_batch_file:
             # For batch files, use cmd.exe with /c to close CMD after execution
             # Using shell=True with the proper command avoids lingering CMD windows
@@ -830,6 +841,39 @@ def launch_game(nickname):
                 stderr=subprocess.DEVNULL,
                 start_new_session=True
             )
+
+        # Check if 2FA is enabled for this account
+        account_config = ACCOUNT_CONFIG.get(nickname)
+        if account_config and account_config.get("enable_2fa", False):
+            keyring_name = account_config.get("keyring_name")
+            if not keyring_name:
+                print(f"[ERROR] 2FA enabled for {nickname} but no keyring_name specified")
+                return False
+
+            # Wait for launcher to initialize
+            print(f"[2FA] Waiting 5 seconds for launcher to initialize...")
+            time.sleep(5)
+
+            # Get OTP secret from keyring
+            otp_secret = keyring.get_password(keyring_name, "otp_secret")
+            if not otp_secret:
+                print(f"[ERROR] OTP secret not found in keyring '{keyring_name}' for {nickname}")
+                return False
+
+            # Generate OTP code
+            totp = pyotp.TOTP(otp_secret)
+            code = totp.now()
+            url = f"http://localhost:4646/ffxivlauncher/{code}"
+
+            print(f"[2FA] Sending OTP {code} to {url}")
+            try:
+                resp = requests.get(url, timeout=5)
+                resp.raise_for_status()
+                print(f"[2FA] OTP sent successfully, status {resp.status_code}")
+            except Exception as e:
+                print(f"[ERROR] Failed to send OTP for {nickname}: {e}")
+                # Continue anyway, the user might need to enter it manually
+
         return True
     except Exception as e:
         print(f"[ERROR] Failed to launch game for {nickname}: {e}")
