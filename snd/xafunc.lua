@@ -16,11 +16,16 @@
 -- | Important Note: This library requires dfunc.lua to be loaded first in your scripts. Many functions build upon
 -- | dfunc's base functionality. Always use require("dfunc") and require("xafunc") in your automation scripts.
 -- |
--- | XA Func Library v2.1
+-- | XA Func Library v2.4
 -- | Created by: https://github.com/xa-io
--- | Last Updated: 2025-11-09 11:20:00
+-- | Last Updated: 2025-12-30 20:20:00
 -- |
 -- | ## Release Notes ##
+-- | v2.4 - Added GetPartyMemberNameXA(), GetPartyMemberRawX/Y/ZPosXA(), PvpMoveToXA()
+-- |        Fixed pathing in FreshLimsaToSummer() after Niniya as vnav gets stucks on the table after a recent update
+-- | v2.3 - Added EnablePluginXA(), DisablePluginXA(), EnablePluginCollectionXA(), DisablePluginCollectionXA()
+-- | v2.2 - Fixed EnterHousingWardFromMenu(), added FreshGridaniaToBentbranch(), FreshGridaniaToBeds(), 
+-- |        BentbranchToBeds()
 -- | v2.1 - Added DebugXA(), TradeDebugXA(), ListDebugXA(), CheckPluginInstalledXA(), CheckPluginEnabledXA(),
 -- |        CheckAnyPluginInstalledXA(), CheckAnyPluginEnabledXA(), ListAllPluginsXA(), ApplyFCPermissionsXA()
 -- | v2.0 - Added IsInFreeCompanyXA(), LeaveFreeCompanyXA(), OpenInventoryXA()
@@ -101,6 +106,10 @@
 -- | QSTReloadXA()                  -- Reload Questionable
 -- | EnableTextAdvanceXA()          -- Enable TextAdvance
 -- | DisableTextAdvanceXA()         -- Disable TextAdvance
+-- | EnablePluginXA()               -- Enable a specific plugin - Usage: EnablePluginXA("Artisan")
+-- | DisablePluginXA()              -- Disable a specific plugin - Usage: DisablePluginXA("Artisan")
+-- | EnablePluginCollectionXA()     -- Enable a specific plugin collection - Usage: EnablePluginCollectionXA("Artisan")
+-- | DisablePluginCollectionXA()    -- Disable a specific plugin collection - Usage: DisablePluginCollectionXA("Artisan")
 -- | 
 -- | World Info
 -- |---------------------------------------------------------------------------
@@ -131,6 +140,9 @@
 -- | PartyDisbandXA()               -- Disband current party
 -- | PartyAcceptXA()                -- Accept party invitation
 -- | PartyLeaveXA()                 -- Leave current party
+-- | GetPartyMemberRawXPosXA(index) -- Get party member raw X position by index (0-7) - Usage: GetPartyMemberRawXPosXA(0)
+-- | GetPartyMemberRawYPosXA(index) -- Get party member raw Y position by index (0-7) - Usage: GetPartyMemberRawYPosXA(0)
+-- | GetPartyMemberRawZPosXA(index) -- Get party member raw Z position by index (0-7) - Usage: GetPartyMemberRawZPosXA(0)
 -- | OpenInventoryXA()              -- Opens Inventory
 -- | OpenArmouryChestXA()           -- Opens Armoury Chest
 -- | OpenDropboxXA()                -- Opens Dropbox, then opens Item Trade Queue tab
@@ -162,6 +174,7 @@
 -- | LifestreamCmdXA(name)          -- Replacement for yield("/li Limsa") - Usage: LifestreamCmdXA("Limsa")
 -- | GetDistanceToPoint(x,y,z)      -- Calculate distance to target coordinates - Usage: GetDistanceToPoint(-12.123, 45.454, -18.5456)
 -- | MoveToXA(x,y,z)                -- Fly/Run to coordinates with pathing - Usage: MoveToXA(-12.123, 45.454, -18.5456)
+-- | PvpMoveToXA(x,y,z)             -- PvP-safe movement that waits for casting to finish - Usage: PvpMoveToXA(-12.123, 45.454, -18.5456)
 -- | WalkToTargetXA(x,y,z,dist)     -- Walk (no mount) to coordinates, stop at distance - Usage: WalkToTargetXA(-12.123, 45.454, -18.5456, 3.0)
 -- | get_coordinates(coords)        -- Helper: Extract coordinates from table
 -- | log_coordinates(coords)        -- Helper: Log coordinates to echo chat
@@ -185,9 +198,14 @@
 -- | SetNewbieCamera()              -- Set camera to comfortable position for new characters
 -- | ImNotNewbStopWatching()        -- Remove sprout, enable text advance, set camera
 -- | FreshLimsaToSummer()           -- Complete Limsa intro sequence and travel to Summerford Farms
--- | FreshLimsaToMist()             -- Travel from Limsa to Mist housing district
--- | FreshSummerToMist()            -- Travel from Summerford Farms to Mist housing district
+-- | FreshLimsaToMist()             -- Complete Limsa intro sequence and travel to Summerford Farms, then to Mist housing district
+-- | SummerToMist()                 -- Travel from Summerford Farms to Mist housing district
 -- | FreshUldahToHorizon()          -- Complete Ul'dah intro sequence and travel to Horizon
+-- | FreshUldahToGoblet()           -- Complete Ul'dah intro sequence and travel to Horizon, then Goblet housing district
+-- | HorizonToGoblet()              -- Travel from Horizon to Goblet housing district
+-- | FreshGridaniaToBentbranch()    -- Complete Gridania intro sequence and travel to Bentbranch Meadows
+-- | FreshGridaniaToBeds()          -- Complete Gridania intro sequence and travel to Bentbranch Meadows, then Lavender Beds housing district
+-- | BentbranchToBeds()             -- Travel from Bentbranch Meadows to Lavender Beds housing district
 -- └---------------------------------------------------------------------------
 
 -- ------------------------
@@ -312,21 +330,21 @@ function CheckPluginInstalledXA(nameOrList)
     -- Does NOT check if enabled - only installation status
     -- Usage: if not CheckPluginInstalledXA("Lifestream") then return end
     -- Usage: if not CheckPluginInstalledXA({"Lifestream", "AutoRetainer", "Dropbox"}) then return end
-    
+
     -- Convert single string to table for uniform processing
     local pluginNames = type(nameOrList) == "table" and nameOrList or {nameOrList}
-    
+
     -- Check each plugin
     for _, name in ipairs(pluginNames) do
         local isInstalled = false
-        
+
         for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
             if plugin.InternalName == name then
                 isInstalled = true
                 break
             end
         end
-        
+
         -- Halt script if plugin is not installed
         if not isInstalled then
             EchoXA("[✗] Plugin '" .. name .. "' is NOT INSTALLED")
@@ -336,7 +354,7 @@ function CheckPluginInstalledXA(nameOrList)
             return false
         end
     end
-    
+
     -- All plugins are installed - silently continue (no spam)
     -- Uncomment below if you want confirmation messages:
     -- if #pluginNames == 1 then
@@ -351,15 +369,15 @@ function CheckPluginEnabledXA(nameOrList)
     -- Check if plugin(s) are installed AND enabled - halts script if not
     -- Usage: if not CheckPluginEnabledXA("Lifestream") then return end
     -- Usage: if not CheckPluginEnabledXA({"Lifestream", "AutoRetainer", "Dropbox"}) then return end
-    
+
     -- Convert single string to table for uniform processing
     local pluginNames = type(nameOrList) == "table" and nameOrList or {nameOrList}
-    
+
     -- Check each plugin
     for _, name in ipairs(pluginNames) do
         local isInstalled = false
         local isEnabled = false
-        
+
         for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
             if plugin.InternalName == name then
                 isInstalled = true
@@ -370,7 +388,7 @@ function CheckPluginEnabledXA(nameOrList)
                 break
             end
         end
-        
+
         -- Halt script if plugin is not installed or not enabled
         if not isInstalled then
             EchoXA("[✗] Plugin '" .. name .. "' is NOT INSTALLED")
@@ -379,7 +397,7 @@ function CheckPluginEnabledXA(nameOrList)
             EchoXA("Plugin '" .. name .. "' not installed - script halted")
             return false
         end
-        
+
         if not isEnabled then
             EchoXA("[✗] Plugin '" .. name .. "' is DISABLED")
             EchoXA("[✗] Script stopped - please enable required plugin!")
@@ -388,7 +406,7 @@ function CheckPluginEnabledXA(nameOrList)
             return false
         end
     end
-    
+
     -- All plugins are ready - silently continue (no spam)
     -- Uncomment below if you want confirmation messages:
     -- if #pluginNames == 1 then
@@ -404,7 +422,7 @@ function CheckAnyPluginInstalledXA(pluginNames)
     -- Usage: if not CheckAnyPluginInstalledXA({"BossMod", "BossModReborn", "RotationSolver"}) then return end
     local foundAny = false
     local foundPlugins = {}
-    
+
     for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
         for _, name in ipairs(pluginNames) do
             if plugin.InternalName == name then
@@ -413,7 +431,7 @@ function CheckAnyPluginInstalledXA(pluginNames)
             end
         end
     end
-    
+
     if not foundAny then
         EchoXA("[✗] At least one of these plugins must be installed:")
         for _, name in ipairs(pluginNames) do
@@ -422,12 +440,12 @@ function CheckAnyPluginInstalledXA(pluginNames)
         EchoXA("[ERROR] No required plugins found - script halted")
         return false
     end
-    
+
     -- Show which plugin(s) were found
     if #foundPlugins > 0 then
         EchoXA("[✓] Found plugin(s): " .. table.concat(foundPlugins, ", "))
     end
-    
+
     return true
 end
 
@@ -436,7 +454,7 @@ function CheckAnyPluginEnabledXA(pluginNames)
     -- Usage: if not CheckAnyPluginEnabledXA({"BossMod", "BossModReborn", "RotationSolver"}) then return end
     local foundAny = false
     local foundPlugins = {}
-    
+
     for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
         for _, name in ipairs(pluginNames) do
             if plugin.InternalName == name and plugin.IsLoaded then
@@ -445,7 +463,7 @@ function CheckAnyPluginEnabledXA(pluginNames)
             end
         end
     end
-    
+
     if not foundAny then
         EchoXA("[✗] At least one of these plugins must be installed AND enabled:")
         for _, name in ipairs(pluginNames) do
@@ -454,12 +472,12 @@ function CheckAnyPluginEnabledXA(pluginNames)
         EchoXA("[ERROR] No required plugins are enabled - script halted")
         return false
     end
-    
+
     -- Show which plugin(s) were found
     if #foundPlugins > 0 then
         EchoXA("[✓] Found enabled plugin(s): " .. table.concat(foundPlugins, ", "))
     end
-    
+
     return true
 end
 
@@ -469,7 +487,7 @@ function ListAllPluginsXA()
     local pluginList = {}
     local enabledCount = 0
     local disabledCount = 0
-    
+
     -- Collect all plugins
     for plugin in luanet.each(Svc.PluginInterface.InstalledPlugins) do
         local status = plugin.IsLoaded
@@ -483,15 +501,15 @@ function ListAllPluginsXA()
             disabledCount = disabledCount + 1
         end
     end
-    
+
     -- Sort alphabetically by name
     table.sort(pluginList, function(a, b) return a.name < b.name end)
-    
+
     -- Display header
     EchoXA("==================================")
     EchoXA("ALL INSTALLED PLUGINS")
     EchoXA("==================================")
-    
+
     -- Display each plugin
     for _, plugin in ipairs(pluginList) do
         if plugin.enabled then
@@ -500,7 +518,7 @@ function ListAllPluginsXA()
             EchoXA("[✗] " .. plugin.name)
         end
     end
-    
+
     -- Display summary
     EchoXA("==================================")
     EchoXA("Total: " .. #pluginList .. " plugins")
@@ -623,6 +641,34 @@ function DisableTextAdvanceXA()
         yield("/at n")
         EchoXA("Disabling Text Advance...")
     end
+end
+
+-- Usage: EnablePluginXA("Artisan")
+function EnablePluginXA(plugin_name)
+    yield("/xlenableplugin " .. plugin_name)
+    EchoXA("Enabled Plugin " .. plugin_name)
+    SleepXA(3)
+end
+
+-- Usage: DisablePluginXA("Artisan")
+function DisablePluginXA(plugin_name)
+    yield("/xldisableplugin " .. plugin_name)
+    EchoXA("Disabled Plugin " .. plugin_name)
+    SleepXA(3)
+end
+
+-- Usage: EnablePluginCollectionXA("Artisan")
+function EnablePluginCollectionXA(collection_name)
+    yield("/xlenableprofile " .. collection_name)
+    EchoXA("Enabled Collection " .. collection_name)
+    SleepXA(3)
+end
+
+-- Usage: DisablePluginCollectionXA("Artisan")
+function DisablePluginCollectionXA(collection_name)
+    yield("/xldisableprofile " .. collection_name)
+    EchoXA("Disabled Collection " .. collection_name)
+    SleepXA(3)
 end
 
 -- ------------------------
@@ -780,11 +826,11 @@ function IsInFreeCompanyXA()
     local fc_gc = Player.FreeCompany.GrandCompany
     local fc_name = Player.FreeCompany.Name
     local fc_rank = Player.FreeCompany.Rank
-    
+
     if fc_gc == "None" or fc_gc == nil or fc_gc == "" then
         return false
     end
-    
+
     if fc_name == nil or fc_name == "" then
         return false
     end
@@ -792,7 +838,7 @@ function IsInFreeCompanyXA()
     if fc_rank == 0 then
         return false
     end
-    
+
     return true
 end
 
@@ -811,7 +857,7 @@ function IsInFreeCompanyResultsXA()
         EchoXA("[✗] Not in a Grand Company (None or nil)")
         return false
     end
-    
+
     if fc_name == nil or fc_name == "" then
         EchoXA("[✗] No Free Company name detected")
         return false
@@ -847,20 +893,20 @@ end
 
 function LeaveFreeCompanyXA()
     EchoXA("Opening Free Company menu to leave...")
-    
+
     -- Open the FC menu
     yield("/freecompanycmd")
     SleepXA(2)
-    
+
     -- Navigate to the Info tab
-    yield("/callback FreeCompany false 0 5u")
+    callbackXA("FreeCompany false 0 5u")
     SleepXA(2)
-    
+
     -- Click Leave FC button
     EchoXA("Leaving Free Company...")
-    yield("/callback FreeCompanyStatus true 3")
+    callbackXA("FreeCompanyStatus true 3")
     SleepXA(2)
-    
+
     -- Confirm the leave action with SelectYesno
     EchoXA("Successfully left Free Company...")
     SelectYesnoXA()
@@ -1008,21 +1054,21 @@ function PartyInviteMenuXA(party_invite_menu_first, party_invite_menu_full)
 
         repeat
             if IsAddonReady("SocialList") then
-                yield('/callback SocialList true 1 0 "' .. party_invite_menu_full .. '"')
+                callbackXA("SocialList true 1 0 '" .. party_invite_menu_full .. "'")
             end
             SleepXA(0.5)
         until IsAddonVisible("ContextMenu")
 
         repeat
             if IsAddonReady("ContextMenu") then
-                yield("/callback ContextMenu true 0 3 0")
+                callbackXA("ContextMenu true 0 3 0")
             end
             SleepXA(0.1)
         until not IsAddonVisible("ContextMenu")
 
         repeat
             if IsAddonReady("Social") then
-                yield("/callback Social true -1")
+                callbackXA("Social true -1")
             end
             SleepXA(0.1)
         until not IsAddonVisible("Social")
@@ -1059,9 +1105,7 @@ function PartyDisbandXA()
             end
         end
         repeat
-            if IsAddonReady("SelectYesno") then
-                yield("/callback SelectYesno true 0")
-            end
+            if IsAddonReady("SelectYesno") then callbackXA("SelectYesno true 0") end
             SleepXA(0.1)
         until not IsAddonVisible("SelectYesno")
     end
@@ -1085,7 +1129,7 @@ function PartyAcceptXA()
         SleepXA(0.1)
 
         -- Accept the party invite
-        yield("/callback SelectYesno true 0")
+        callbackXA("SelectYesno true 0")
 
         -- Wait until the player is in a party
         repeat
@@ -1115,9 +1159,7 @@ function PartyLeaveXA()
         SleepXA(0.1)
 
         repeat
-            if IsAddonReady("SelectYesno") then
-                yield("/callback SelectYesno true 0")
-            end
+            if IsAddonReady("SelectYesno") then callbackXA("SelectYesno true 0") end
             SleepXA(0.1)
         until not IsAddonVisible("SelectYesno")
 
@@ -1154,7 +1196,7 @@ function FullStopMovementXA()
     end
     SleepXA(1.02)
     yield("/visland stop")
-    yield("/vnavmesh stop")
+    vnavXA("stop")
     yield("/automove off")
     SleepXA(1.03)
 end
@@ -1179,12 +1221,51 @@ function IsPlayerCastingXA()
     return Player.IsCasting
 end
 
---- Get party member name by index (0-7)
+function IsPlayerDeadXA()
+    if Svc and Svc.Condition then
+        if type(Svc.Condition.IsDeath) == "function" then
+            local ok, res = pcall(Svc.Condition.IsDeath, Svc.Condition)
+            if ok then return res end
+        end
+        return Svc.Condition[2] == true
+    end
+    return false
+end
+
+-- Get party member name by index (0-7)
 function GetPartyMemberNameXA(index)
-    if Party == nil then return nil end
-    local member = Party[index]
+    if Entity == nil or Entity.GetPartyMember == nil then return nil end
+    local member = Entity.GetPartyMember(index)
     if member == nil then return nil end
     return member.Name
+end
+
+--- Get party member position functions using two-step lookup: GetPartyMember for name, GetEntityByName for position
+function GetPartyMemberRawXPosXA(index)
+    if Entity == nil or Entity.GetPartyMember == nil then return nil end
+    local member = Entity.GetPartyMember(index)
+    if member == nil or member.Name == nil then return nil end
+    local entity = Entity.GetEntityByName(member.Name)
+    if entity == nil or entity.Position == nil then return nil end
+    return entity.Position.X
+end
+
+function GetPartyMemberRawYPosXA(index)
+    if Entity == nil or Entity.GetPartyMember == nil then return nil end
+    local member = Entity.GetPartyMember(index)
+    if member == nil or member.Name == nil then return nil end
+    local entity = Entity.GetEntityByName(member.Name)
+    if entity == nil or entity.Position == nil then return nil end
+    return entity.Position.Y
+end
+
+function GetPartyMemberRawZPosXA(index)
+    if Entity == nil or Entity.GetPartyMember == nil then return nil end
+    local member = Entity.GetPartyMember(index)
+    if member == nil or member.Name == nil then return nil end
+    local entity = Entity.GetEntityByName(member.Name)
+    if entity == nil or entity.Position == nil then return nil end
+    return entity.Position.Z
 end
 
 function IsPlayerAvailableXA()
@@ -1223,7 +1304,7 @@ function CharacterSafeWaitXA() -- Use this call for safewaits
         local ready, vis = np and np.Ready or false, np and np.Exists or false
         local avail = IsPlayerAvailableXA()
 
-        EchoXA(string.format("[NP %s/%s] [PLR %s] %s", tostring(ready), tostring(vis), tostring(avail), zoning and "(zoning)" or ""))
+        -- EchoXA(string.format("[NP %s/%s] [PLR %s] %s", tostring(ready), tostring(vis), tostring(avail), zoning and "(zoning)" or ""))
 
         if ready and vis and avail then
             EchoXA("All ready — stopping loop")
@@ -1256,9 +1337,9 @@ function DoNavFlySequenceXA()
     if NavIsReady() then
         -- Choose flyflag vs moveflag based on Player.CanFly
         if Player and Player.CanFly then
-            yield("/vnav flyflag")
+            vnavXA("flyflag")
         else
-            yield("/vnav moveflag")
+            vnavXA("moveflag")
         end
 
         -- Stay paused while the path is active
@@ -1285,7 +1366,7 @@ function MountUpXA()
         if Svc.Condition[27] then
             SleepXA(2)
         else
-            yield('/gaction "mount roulette"')
+            gaXA("mount roulette")
             SleepXA(0.1)
         end
     end
@@ -1296,7 +1377,7 @@ function DismountXA()
         yield("/mount")
         SleepXA(2)
     end
-    
+
     while not Svc.Condition[1] do
         SleepXA(0.1)
     end
@@ -1386,6 +1467,49 @@ function EnableDeliverooXA()
     yield("/deliveroo enable")
 end
 
+function RestoreYesAlreadyXA()
+    -- Restores YesAlready plugin when Deliveroo pauses or disables it
+    -- Based on Deliveroo's ExternalPluginHandler.RestoreYesAlready() implementation
+    -- which removes "Deliveroo" from YesAlready.StopRequests data
+    if IPC and IPC.YesAlready then
+        IPC.YesAlready.SetPluginEnabled(true)
+        EchoXA("YesAlready restored after Deliveroo pause/disable")
+    else
+        EchoXA("Warning: YesAlready IPC not available")
+    end
+end
+
+function GetYesAlreadyStateXA()
+    -- Test function to check the current state of YesAlready plugin
+    -- Returns and displays whether YesAlready is enabled or disabled
+    EchoXA("=== YesAlready State Check ===")
+
+    if not IPC then
+        EchoXA("IPC not available")
+        return nil
+    end
+
+    if not IPC.YesAlready then
+        EchoXA("YesAlready IPC not available - plugin may not be installed")
+        return nil
+    end
+
+    -- Try to get the enabled state
+    local isEnabled = IPC.YesAlready.SetPluginEnabled()
+    if isEnabled ~= nil then
+        if isEnabled then
+            EchoXA("YesAlready Status: ENABLED")
+        else
+            EchoXA("YesAlready Status: DISABLED")
+        end
+    else
+        EchoXA("YesAlready Status: UNKNOWN (could not retrieve state)")
+    end
+
+    EchoXA("=========================")
+    return isEnabled
+end
+
 function LifestreamCmdXA(name)
     local dest = (type(name) == "string") and name:match("^%s*(.-)%s*$") or ""
     if dest == "" then
@@ -1413,12 +1537,12 @@ function GetDistanceToPoint(target_x, target_y, target_z)
     local player_x = GetPlayerRawXPos()
     local player_y = GetPlayerRawYPos()
     local player_z = GetPlayerRawZPos()
-    
+
     -- If only 2 coordinates provided, assume Z is same as player's Z
     if target_z == nil then
         target_z = player_z
     end
-    
+
     local dx = player_x - target_x
     local dy = player_y - target_y
     local dz = player_z - target_z
@@ -1440,50 +1564,50 @@ function WalkToTargetXA(target_x, target_y, target_z, stop_dist)
         local dz = target_z - player_z
         return math.sqrt(dx * dx + dy * dy + dz * dz)
     end
-    
+
     local current_dist = GetCurrentDistance()
-    
+
     -- If already within stop distance, don't move
     if current_dist <= stop_dist then
         EchoXA(string.format("[Walk] Already within %.1f yalms, no movement needed", stop_dist))
         return
     end
-    
+
     -- Start walking (no flying/mounting)
     yield(string.format("/vnav moveto %.2f %.2f %.2f", target_x, target_y, target_z))
     SleepXA(0.5)
-    
+
     -- Monitor distance and stop when close enough
     local max_iterations = 100
     local iterations = 0
     local stop_buffer = 1.5  -- Stop earlier to account for movement momentum
-    
+
     while iterations < max_iterations do
         current_dist = GetCurrentDistance()
-        
+
         -- Stop when within desired distance (with buffer for momentum)
         if current_dist <= (stop_dist + stop_buffer) then
-            yield("/vnav stop")
+            vnavXA("stop")
             SleepXA(0.3)
             local final_dist = GetCurrentDistance()
             EchoXA(string.format("[Walk] Stopped at %.1f yalms from target", final_dist))
             return
         end
-        
+
         -- Check if pathfinding stopped (arrived or failed)
         if not PathfindInProgress() and not PathIsRunning() then
-            yield("/vnav stop")
+            vnavXA("stop")
             SleepXA(0.3)
             EchoXA(string.format("[Walk] Pathfinding completed at %.1f yalms", current_dist))
             return
         end
-        
+
         SleepXA(0.3)
         iterations = iterations + 1
     end
-    
+
     -- Timeout - stop movement
-    yield("/vnav stop")
+    vnavXA("stop")
     SleepXA(0.3)
     EchoXA("[Walk] Movement timeout - stopped")
 end
@@ -1494,18 +1618,18 @@ end
 function MoveToXA(valuex, valuey, valuez, stopdistance, FlyOrWalk)
     -- stopdistance and FlyOrWalk are optional (kept for backwards compatibility)
     SleepXA(0.1)
-    
+
     MovingCheaterXA()
-    
+
     -- Use flight if player can fly, otherwise walk
     PathfindAndMoveTo(valuex, valuey, valuez, Player and Player.CanFly or false)
-    
+
     local countee = 0
     while (PathIsRunning() or PathfindInProgress()) do
         SleepXA(0.507)
         countee = countee + 1
         if gachi_jumpy == 1 and countee == 10 and Svc.ClientState.TerritoryType ~= 129 then
-            yield("/gaction jump")
+            gaXA("jump")
             countee = 0
             EchoXA("We are REALLY still pathfinding apparently.")
         end
@@ -1531,6 +1655,16 @@ function move_to(coords)
             SleepXA(0.5)
         end
     end
+end
+
+function PvpMoveToXA(x, y, z)
+    -- Wait until player finishes casting before moving
+    while GetCharacterCondition(27) do
+        yield("/vnav stop")
+        yield("/wait 0.1")
+    end
+    -- Execute vnavmesh moveto command with provided coordinates
+    yield("/vnavmesh moveto "..x.." "..y.." "..z)
 end
 
 -- ------------------------
@@ -1666,6 +1800,7 @@ function EnterHousingWardFromMenu()
     SleepXA(2)
     callbackXA("HousingSelectBlock true 0")
     SleepXA(3)
+    SelectYesnoXA()
 end
 
 function SetNewbieCamera()
@@ -1715,6 +1850,7 @@ function FreshLimsaToSummer()
     MoveToXA(7.9892959594727, 20.99979019165, 11.781483650208)
     TargetXA("Grehfarr")
     InteractXA()
+    SelectYesnoXA()
     CharacterSafeWaitXA()
 
     -- Run to bar
@@ -1743,14 +1879,14 @@ function FreshLimsaToSummer()
     TargetXA("Niniya")
     InteractXA()
     CharacterSafeWaitXA()
+    MoveToXA(5.2157278060913, 39.517566680908, 0.48788833618164)
+    MoveToXA(3.6472775936127, 39.517570495605, 3.6093680858612)
 
     -- Run to elevator
     MoveToXA(6.0743732452393, 39.866470336914, 12.235060691833)
     TargetXA("Skaenrael")
     InteractXA()
-    callbackXA("SelectIconString true 1") -- Bulwark Hall
-    SleepXA(2)
-    callbackXA("SelectYesno true 0") -- Proceed
+    SelectYesnoXA()
     CharacterSafeWaitXA()
 
     -- Run to Aetheryte and attune
@@ -1771,6 +1907,8 @@ function FreshLimsaToSummer()
 end
 
 function FreshLimsaToMist()
+    FreshLimsaToSummer()
+
     -- Run to southern door
     gaXA("Sprint")
     MoveToXA(188.85900878906, 65.238052368164, 285.26428222656)
@@ -1785,7 +1923,7 @@ function FreshLimsaToMist()
     EnterHousingWardFromMenu()
 end
 
-function FreshSummerToMist()
+function SummerToMist()
     -- Run to southern door
     gaXA("Sprint")
     MoveToXA(188.85900878906, 65.238052368164, 285.26428222656)
@@ -1834,15 +1972,91 @@ function FreshUldahToHorizon()
     MoveToXA(-178.24040222168, 14.049882888794, -16.344312667847)
     WalkThroughDottedWallXA()
 
-    -- Run horizon
+    -- Run to horizon
     gaXA("Sprint")
     MoveToXA(69.638557434082, 46.244579315186, -224.87077331543)
     grab_aetheryte()
     CharacterSafeWaitXA()
+end
+
+function FreshUldahToGoblet()
+    FreshUldahToHorizon()
 
     -- Run to Goblet
     gaXA("Sprint")
     MoveToXA(316.9354, 67.2082, 235.8752)
     WalkThroughDottedWallXA()
+    EnterHousingWardFromMenu()
+end
+
+function HorizonToGoblet()
+    -- Run to Goblet
+    gaXA("Sprint")
+    MoveToXA(316.9354, 67.2082, 235.8752)
+    WalkThroughDottedWallXA()
+    EnterHousingWardFromMenu()
+end
+
+function FreshGridaniaToBentbranch()
+    ImNotNewbStopWatching()
+
+    -- Gridania Intro
+    MoveToXA(118.21111297607, -12.538880348206, 143.81802368164)
+    TargetXA("Bertennant")
+    InteractXA()
+    CharacterSafeWaitXA()
+
+    -- Run to bar
+    MoveToXA(25.640754699707, -8.0, 114.60215759277)
+    TargetXA("Mother Miounne")
+    InteractXA()
+    CharacterSafeWaitXA()
+
+    -- Complete MSQ Quest
+    TargetXA("Mother Miounne")
+    InteractXA()
+    CharacterSafeWaitXA()
+
+    -- Confirm
+    TargetXA("Mother Miounne")
+    InteractXA()
+    CharacterSafeWaitXA()
+
+    -- Run to gridania crystal
+    MoveToXA(34.434555053711, 2.2000005245209, 32.727458953857)
+    grab_aetheryte()
+    CharacterSafeWaitXA()
+
+    -- Run to central shroud
+    MoveToXA(118.21111297607, -12.538880348206, 143.81802368164)
+    MoveToXA(152.84782409668, -12.851945877075, 157.20837402344)
+    WalkThroughDottedWallXA()
+
+    -- Run to Bentbranch
+    gaXA("Sprint")
+    MoveToXA(181.85122680664, -8.3421506881714, -39.37228012085)
+    MoveToXA(87.608024597168, -6.2946090698242, 63.980049133301)
+    MoveToXA(16.9049949646, -1.077308177948, 32.931064605713)
+    grab_aetheryte()
+    CharacterSafeWaitXA()
+end
+
+function FreshGridaniaToBeds()
+    FreshGridaniaToBentbranch()
+
+    -- Run to Beds
+    gaXA("Sprint")
+    MoveToXA(199.21711730957, -32.045715332031, 324.18838500977)
+    TargetXA("Ferry Skipper")
+    InteractXA()
+    EnterHousingWardFromMenu()
+end
+
+function BentbranchToBeds()
+    -- Run to Beds
+    gaXA("Sprint")
+    MoveToXA(199.21711730957, -32.045715332031, 324.18838500977)
+    TargetXA("Ferry Skipper")
+    InteractXA()
     EnterHousingWardFromMenu()
 end

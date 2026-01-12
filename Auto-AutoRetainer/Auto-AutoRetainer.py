@@ -27,13 +27,59 @@
 # labeled with "ProcessID - nickname" format, autologging enabled without 2FA, and AutoRetainer multi-mode auto-enabled
 # for full automation. See README.md for complete setup instructions.
 #
-# Auto-AutoRetainer v1.17
+# Auto-AutoRetainer v1.23
 # Automated FFXIV Submarine Management System
 # Created by: https://github.com/xa-io
-# Last Updated: 2025-12-24 14:02:00
+# Last Updated: 2026-01-11 07:00:00
 #
 # ## Release Notes ##
 #
+# v1.23 - Critical bug fix: Window title failure no longer kills all running game clients
+#         In multi-client mode, failing to launch one account no longer closes other running games
+#         Added ENABLE_AUTOLOGIN_UPDATER to auto-fix launcher config when game fails to open
+#         Checks launcherConfigV3.json and updates AutologinEnabled from "false" to "true" before retry
+#         Runs autologin check after launcher fail 1/3 and 2/3 (two chances to fix before final failure)
+#         Added ENABLE_LOGGING and arr.log file for tracking major issues (17 logged events)
+#         Logs process kills, game launches, config errors, window crashes, autologin updates, and launcher failures
+#         Multi-client mode continues normal rotation when window title check fails
+#         Game client checker retries failed accounts in WINDOW_REFRESH_INTERVAL (60) seconds
+# v1.22 - Added robust window movement with retry logic and responsiveness checking
+#         Implemented is_window_responding() to detect frozen windows before move attempts
+#         Added MAX_WINDOW_MOVE_ATTEMPTS = 3 configuration for retry logic per window
+#         Window position verification now only checks x,y coordinates (FFXIV controls own size via graphics settings)
+#         Up to 3 move attempts per window with 1-second verification delay between attempts
+#         Script skips unresponsive windows instead of freezing, continues processing remaining windows
+#         Failed windows tracked separately with detailed failure reasons in debug output
+#         Enhanced move_window_to_position() with MoveWindow API for reliable positioning
+#         WINDOW_MOVE_VERIFICATION_DELAY = 1 second (reduced from 3 for faster processing)
+#         Added MAX_FAILED_FORCE_CRASH = True to automatically crash clients after failed window moves
+#         Failed clients will be relaunched on next cycle if they should be running (similar to inactivity timer)
+#         Extracts PID from window title and force crashes using kill_process_by_pid()
+#         Prevents script freeze when game clients become unresponsive during window arrangement
+# v1.21 - Disabled force-close monitoring when all submarines are voyaging (idle state)
+#         Force-close monitoring now only runs when ready_subs > 0 or account is in (WAITING) state
+#         When all subs are voyaging with 0 ready (showing +hours without status), monitoring is disabled
+#         Prevents false-positive crashes for force247uptime accounts idle between voyage completions
+#         Monitoring activates when subs become ready, deactivates when all subs sent out
+#         Ensures force-close only monitors accounts with actual work to process
+# v1.20 - Enhanced force-close timer to extend when accounts are in (WAITING) state
+#         Force-close inactivity timer now resets when game is in (WAITING) status
+#         (WAITING) occurs when game is running with 0 ready subs and hours <= AUTO_CLOSE_THRESHOLD
+#         Timer extension prevents force-close during legitimate wait periods (up to 0.5h default)
+#         Inactivity timer resets on each scan when (WAITING) is active, similar to submarine processing
+#         Ensures force-close only triggers for frozen/stuck clients, not idle waiting states
+# v1.19 - Fixed force-crash monitoring to respect ENABLE_AUTO_CLOSE setting
+#         Force-crash inactivity monitoring now only runs when ENABLE_AUTO_CLOSE = True
+#         When ENABLE_AUTO_CLOSE = False, clients will never be force-closed due to inactivity
+#         Resolves issue where frozen client detection would crash clients even when auto-close was disabled
+#         Ensures user control over client lifecycle when auto-close features are not desired
+# v1.18 - Improved Force-Close timer to start when game launches instead of when subs are processed
+#         Force-Close monitoring now starts AUTO_LAUNCH_THRESHOLD minutes after game opens (matches game launch threshold)
+#         Crash timer begins even if game boots stuck without processing any submarines (resolves stuck-at-boot issue)
+#         After AUTO_LAUNCH_THRESHOLD delay, FORCE_CRASH_INACTIVITY_MINUTES timer activates (default: 10 minutes)
+#         Timer still resets whenever submarines are processed (preserves existing behavior during active play)
+#         Game launch timestamp tracked per account to determine when monitoring should activate
+#         Eliminates issue where frozen games at boot would never trigger force-close because no subs were processed
 # v1.17 - Added DalamudCrashHandler.exe detection and automatic closing
 #         Monitors for active DalamudCrashHandler.exe windows (indicates game crash) every WINDOW_REFRESH_INTERVAL
 #         Distinguishes between active crash handler windows (problem state) and background processes (normal state)
@@ -173,7 +219,7 @@ except ImportError:
 # ===============================================
 # Configuration Parameters
 # ===============================================
-VERSION = "v1.17"       # Current script version
+VERSION = "v1.23"       # Current script version
 
 # Display settings
 NICKNAME_WIDTH = 5      # Display column width for account nicknames in terminal output
@@ -190,8 +236,9 @@ WINDOW_REFRESH_INTERVAL = 60    # How often (seconds) to scan running processes 
 ENABLE_AUTO_CLOSE = True            # Enable automatic closing of game clients when submarines are not ready soon
 AUTO_CLOSE_THRESHOLD = 0.5          # Close game if soonest submarine return time exceeds this many hours (0.5h = 30 minutes)
 MAX_RUNTIME = 71                    # Force close any game client that has been running for this many hours (prevents indefinite uptime)
-FORCE_CRASH_INACTIVITY_MINUTES = 10 # Force crash client if no submarine processing detected for this many minutes (when subs are ready and monitoring active)
-CRASH_MONITOR_DELAY = 0.2           # Hours to wait after subs become ready before activating force-crash monitoring (ensures game has fully loaded)
+FORCE_CRASH_INACTIVITY_MINUTES = 10 # Force crash client if no submarine processing detected for this many minutes (after monitoring activates)
+# Note: Monitoring activates AUTO_LAUNCH_THRESHOLD hours after game launches (not when subs become ready)
+# This ensures crash detection works even if game boots stuck without processing any submarines
 
 # Auto-launch game settings
 ENABLE_AUTO_LAUNCH = True       # Enable automatic launching of game clients when submarines are nearly ready
@@ -200,6 +247,9 @@ OPEN_DELAY_THRESHOLD = 60       # Minimum seconds to wait between launching the 
 WINDOW_TITLE_RESCAN = 5         # Seconds to wait between each window title check after launch (polling interval for plugin to rename window)
 MAX_WINDOW_TITLE_RESCAN = 20    # Maximum number of title check attempts before giving up (20 checks × 5s = 100s timeout, then kills stuck process and retries)
 FORCE_LAUNCHER_RETRY = 3        # Maximum number of launcher retry attempts when XIVLauncher.exe opens instead of game (prevents stuck accounts)
+ENABLE_AUTOLOGIN_UPDATER = True # Enable automatic updating of AutologinEnabled in launcherConfigV3.json when launcher opens instead of game
+                                # When True: After launcher fail 1/3 or 2/3, checks and updates AutologinEnabled to "true" before retry
+                                # This fixes rare cases where launcher opens because autologin was disabled in the config
 MAX_CLIENTS = 0                 # Maximum concurrent running game clients allowed (0 = unlimited, N = caps at N clients for hardware-limited systems)
                                 # When limit reached, prioritizes force247uptime accounts first, then submarine-ready accounts
 
@@ -207,9 +257,16 @@ MAX_CLIENTS = 0                 # Maximum concurrent running game clients allowe
 ENABLE_WINDOW_LAYOUT = False                 # Enable automatic positioning/sizing of game windows after launch (requires window layout JSON files)
 WINDOW_LAYOUT = "main"                       # Which layout configuration to use: "left" (SubTimers_left) or "main" (SubTimers_main)
 WINDOW_MOVER_DIR = Path(__file__).parent     # Directory containing window layout JSON files (windows_layout_left.json / windows_layout_main.json)
+MAX_WINDOW_MOVE_ATTEMPTS = 3                 # Maximum number of window move attempts per client (1-3 recommended, prevents script freeze on unresponsive windows)
+WINDOW_MOVE_VERIFICATION_DELAY = 1           # Seconds to wait after window move before verifying position (allows window to settle)
+MAX_FAILED_FORCE_CRASH = False               # Force crash client after MAX_WINDOW_MOVE_ATTEMPTS failures (script will relaunch on next cycle if game should be running)
 
 # Debug settings
 DEBUG = False                   # Show verbose debug output (auto-launch eligibility checks, window detection, process tracking, etc.)
+
+# Logging settings
+ENABLE_LOGGING = True          # Enable logging major issues to arr.log file (default: False for Auto-AutoRetainer, True for SubTimers scripts)
+LOG_FILE = "arr.log"           # Log file name for major issues (created in script directory)
 
 # System settings
 SYSTEM_BOOTUP_DELAY = 0         # Seconds to delay before starting script monitoring (useful for auto-start on system boot, 0 = no delay)
@@ -260,6 +317,103 @@ GAME_LAUNCHERS = {
 ACCOUNT_CONFIG = {acc_data["nickname"]: acc_data for acc_data in account_locations}
 
 # ===============================================
+# Logging Functions
+# ===============================================
+def log_error(message):
+    """
+    Log major issues to arr.log file with timestamp.
+    Only logs if ENABLE_LOGGING is True.
+    """
+    if not ENABLE_LOGGING:
+        return
+    try:
+        log_path = Path(__file__).parent / LOG_FILE
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"[{timestamp}] {message}\n")
+    except Exception as e:
+        if DEBUG:
+            print(f"[DEBUG] Failed to write to log file: {e}")
+
+# ===============================================
+# Autologin Updater Functions
+# ===============================================
+def get_launcher_config_path(nickname):
+    """
+    Get the launcherConfigV3.json path for a given account nickname.
+    The launcher config is in the PARENT directory of pluginConfigs.
+    Example: pluginConfigs = C:\\Users\\user\\AltData\\Acc1\\pluginConfigs
+             launcher config = C:\\Users\\user\\AltData\\Acc1\\launcherConfigV3.json
+    Returns None if account not found or path doesn't exist.
+    """
+    for account in account_locations:
+        if account["nickname"] == nickname:
+            # Get the pluginConfigs path from auto_path (remove AutoRetainer/DefaultConfig.json)
+            auto_path = account["auto_path"]
+            pluginconfigs_path = Path(auto_path).parent.parent  # Go up from AutoRetainer/DefaultConfig.json to pluginConfigs
+            launcher_config_path = pluginconfigs_path.parent / "launcherConfigV3.json"
+            return launcher_config_path
+    return None
+
+def check_and_update_autologin(nickname):
+    """
+    Check and update AutologinEnabled in launcherConfigV3.json for the given account.
+    If AutologinEnabled is "false", updates it to "true".
+    Returns True if update was made, False if no update needed or error occurred.
+    """
+    if not ENABLE_AUTOLOGIN_UPDATER:
+        return False
+    
+    launcher_config_path = get_launcher_config_path(nickname)
+    if launcher_config_path is None:
+        if DEBUG:
+            print(f"[AUTOLOGIN] Could not find launcher config path for {nickname}")
+        return False
+    
+    if not launcher_config_path.exists():
+        if DEBUG:
+            print(f"[AUTOLOGIN] Launcher config file not found: {launcher_config_path}")
+        log_error(f"AUTOLOGIN_FILE_NOT_FOUND: {nickname} - {launcher_config_path}")
+        return False
+    
+    try:
+        # Read the JSON file
+        with open(launcher_config_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Check current AutologinEnabled value
+        current_value = data.get("AutologinEnabled", None)
+        
+        if current_value == "false":
+            # Update to "true"
+            data["AutologinEnabled"] = "true"
+            
+            # Write back to file
+            with open(launcher_config_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4)
+            
+            print(f"[AUTOLOGIN] Updated AutologinEnabled from 'false' to 'true' for {nickname}")
+            log_error(f"AUTOLOGIN_UPDATED: {nickname} - Changed AutologinEnabled from 'false' to 'true' in {launcher_config_path}")
+            return True
+        elif current_value == "true":
+            if DEBUG:
+                print(f"[AUTOLOGIN] AutologinEnabled already 'true' for {nickname}")
+            return False
+        else:
+            if DEBUG:
+                print(f"[AUTOLOGIN] AutologinEnabled has unexpected value '{current_value}' for {nickname}")
+            return False
+            
+    except json.JSONDecodeError as e:
+        print(f"[AUTOLOGIN] Error parsing JSON for {nickname}: {e}")
+        log_error(f"AUTOLOGIN_JSON_ERROR: {nickname} - {e}")
+        return False
+    except Exception as e:
+        print(f"[AUTOLOGIN] Error updating config for {nickname}: {e}")
+        log_error(f"AUTOLOGIN_ERROR: {nickname} - {e}")
+        return False
+
+# ===============================================
 # Submarine Build Gil Rates (from AR Parser)
 # Gil/Sub/Day rates for each route
 # ===============================================
@@ -267,25 +421,25 @@ build_gil_rates = {
     # OJ Route (24h) - 118,661 gil/day
     "WSUC": 118661,
     "SSUC": 118661,
-    "W+S+U+C+": 118661,  # WSUC++
-    "S+S+S+C+": 118661,  # SSSC++
+    "W+S+U+C+": 118661,  # WSUC++ (modified)
+    "S+S+S+C+": 118661,  # SSSC++ (modified for OJ route)
     
     # MOJ Route (36h) - 93,165 gil/day
     "YUUW": 93165,
-    "Y+U+U+W+": 93165,  # YU+U+W+
+    "Y+U+U+W+": 93165,  # YU+U+W+ (modified)
     
     # ROJ Route (36h) - 106,191 gil/day
     "WCSU": 106191,
     "WUSS": 106191,
-    "W+U+S+S+": 106191,  # WUSS++
+    "W+U+S+S+": 106191,  # WUSS++ (modified)
     
     # JOZ Route (36h) - 113,321 gil/day
     "YSYC": 113321,
-    "Y+S+Y+C+": 113321,  # YS+YC+
+    "Y+S+Y+C+": 113321,  # YS+YC+ (modified)
     
     # MROJ Route (36h) - 120,728 gil/day
-    "S+S+S+C+": 120728,  # SSSC++
-    "S+S+U+C+": 120728,  # SSUC++
+    "S+S+S+C+": 120728,  # SSSC++ (modified)
+    "S+S+U+C+": 120728,  # SSUC++ (modified)
     
     # JORZ Route (36h) - 140,404 gil/day (highest gil/day)
     "S+S+U+C": 140404,
@@ -294,7 +448,7 @@ build_gil_rates = {
     # JORZ 48h Route - 105,303 gil/day
     "WCYC": 105303,
     "WUWC": 105303,
-    "W+U+W+C+": 105303,  # WUWC++
+    "W+U+W+C+": 105303,  # WUWC++ (modified)
     
     # MOJZ Route (36h) - 127,857 gil/day
     # MOJZ uses SSUC++ at rank 110
@@ -302,7 +456,7 @@ build_gil_rates = {
     # MROJZ Route (48h) - 116,206 gil/day
     "YSCU": 116206,
     "SCUS": 116206,
-    "S+C+U+S+": 116206,  # SCUS++
+    "S+C+U+S+": 116206,  # SCUS++ (modified)
 }
 
 # ===============================================
@@ -481,6 +635,10 @@ GWL_EXSTYLE = -20
 WS_MAXIMIZE = 0x01000000
 WS_MINIMIZE = 0x20000000
 
+# Window message constants for responsiveness checking
+SMTO_ABORTIFHUNG = 0x0002
+WM_NULL = 0x0000
+
 def read_window_layout_config():
     """Read window layout JSON config based on WINDOW_LAYOUT setting"""
     layout_file = f"window_layout_{WINDOW_LAYOUT}.json"
@@ -522,16 +680,106 @@ def find_all_windows():
     win32gui.EnumWindows(_enum, None)
     return wins
 
+def is_window_responding(hwnd):
+    """
+    Check if a window is responding using SendMessageTimeout.
+    Returns True if window is responding, False if frozen/not responding.
+    """
+    try:
+        # Use SendMessageTimeout to check if window responds within 5 seconds
+        SendMessageTimeout = ctypes.windll.user32.SendMessageTimeoutW
+        SendMessageTimeout.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM, wintypes.UINT, wintypes.UINT, ctypes.POINTER(wintypes.DWORD)]
+        
+        result = wintypes.DWORD()
+        ret = SendMessageTimeout(hwnd, WM_NULL, 0, 0, SMTO_ABORTIFHUNG, 5000, ctypes.byref(result))
+        
+        # ret == 0 means the window is not responding
+        return ret != 0
+    except Exception as e:
+        if DEBUG:
+            print(f"[WINDOW-MOVER] Error checking window responsiveness: {e}")
+        return False
+
+def get_window_position(hwnd):
+    """
+    Get the current position and size of a window.
+    Returns dict with x, y, width, height or None if failed.
+    """
+    try:
+        rect = win32gui.GetWindowRect(hwnd)
+        return {
+            'x': rect[0],
+            'y': rect[1],
+            'width': rect[2] - rect[0],
+            'height': rect[3] - rect[1]
+        }
+    except Exception as e:
+        if DEBUG:
+            print(f"[WINDOW-MOVER] Error getting window position: {e}")
+        return None
+
+def verify_window_position(hwnd, expected_x, expected_y, expected_w, expected_h, tolerance=10):
+    """
+    Verify that a window moved to the expected position.
+    Returns True if position matches within tolerance, False otherwise.
+    tolerance: pixels of acceptable difference (default 10px for window borders/decorations)
+    
+    Note: Only verifies position (x,y), not size, as FFXIV windows control their own size
+    via internal graphics settings and cannot be resized programmatically.
+    """
+    actual = get_window_position(hwnd)
+    if not actual:
+        return False
+    
+    x_match = abs(actual['x'] - expected_x) <= tolerance
+    y_match = abs(actual['y'] - expected_y) <= tolerance
+    
+    # FFXIV windows control their own size via graphics settings, so we only verify position
+    if DEBUG:
+        if not (x_match and y_match):
+            print(f"[WINDOW-MOVER] Position mismatch: Expected ({expected_x},{expected_y}), Got ({actual['x']},{actual['y']})")
+        elif actual['width'] != expected_w or actual['height'] != expected_h:
+            print(f"[WINDOW-MOVER] Note: Window size ({actual['width']}x{actual['height']}) differs from config ({expected_w}x{expected_h}) - FFXIV controls its own size via graphics settings")
+    
+    return x_match and y_match
+
 def move_window_to_position(hwnd, x, y, w, h, topmost=False, activate=False):
-    insert_after = HWND_TOPMOST if topmost else HWND_NOTOPMOST
-    flags = SWP_FRAMECHANGED | SWP_SHOWWINDOW
-    if not activate:
-        flags |= SWP_NOACTIVATE
-    SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | flags)
-    SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW)
+    try:
+        # Get current window style
+        style = win32gui.GetWindowLong(hwnd, GWL_STYLE)
+        
+        # Remove styles that might prevent resizing (WS_MAXIMIZEBOX = 0x00010000, WS_THICKFRAME = 0x00040000)
+        # But keep other important styles
+        new_style = style | 0x00040000  # Ensure WS_THICKFRAME (resizable border) is set
+        win32gui.SetWindowLong(hwnd, GWL_STYLE, new_style)
+        
+        # Set topmost state
+        insert_after = HWND_TOPMOST if topmost else HWND_NOTOPMOST
+        flags = SWP_FRAMECHANGED | SWP_SHOWWINDOW
+        if not activate:
+            flags |= SWP_NOACTIVATE
+        
+        SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | flags)
+        time.sleep(0.05)
+        
+        # Use MoveWindow for more direct resize control
+        win32gui.MoveWindow(hwnd, x, y, w, h, True)  # True = repaint
+        time.sleep(0.1)  # Give more time for resize to take effect
+        
+        # Restore original style
+        win32gui.SetWindowLong(hwnd, GWL_STYLE, style)
+        
+        # Force redraw
+        win32gui.RedrawWindow(hwnd, None, None, 0x0001 | 0x0004)
+    except Exception as e:
+        if DEBUG:
+            print(f"[WINDOW-MOVER] Error in move_window_to_position: {e}")
 
 def arrange_ffxiv_windows():
-    """Arrange all FFXIV game windows according to the configured layout"""
+    """
+    Arrange all FFXIV game windows according to the configured layout.
+    Includes responsiveness checking, retry logic, and position verification.
+    """
     layout = read_window_layout_config()
     if not layout:
         return False
@@ -562,7 +810,11 @@ def arrange_ffxiv_windows():
             print(f"[WINDOW-MOVER] No FFXIV windows found to arrange")
         return False
     
-    # Apply moves with temporary topmost
+    # Track successful and failed moves
+    successful_moves = []
+    failed_moves = []
+    
+    # Apply moves with retry logic and verification
     for rule, hwnd, title in assigned:
         x = int(rule["x"])
         y = int(rule["y"])
@@ -570,32 +822,96 @@ def arrange_ffxiv_windows():
         h = int(rule["height"])
         activate = bool(rule.get("activate", False))
         
-        try:
-            restore_if_minimized(hwnd)
-            remove_maximize_state(hwnd)
-            move_window_to_position(hwnd, x, y, w, h, topmost=True, activate=activate)
-            if DEBUG:
-                print(f"[WINDOW-MOVER] Moved: '{title}' -> ({x},{y},{w},{h})")
+        move_success = False
+        
+        # Check if window is responding before attempting move
+        if not is_window_responding(hwnd):
+            print(f"[WINDOW-MOVER] WARNING: Window '{title}' is not responding, skipping move")
+            failed_moves.append((hwnd, title, "not responding"))
+            continue
+        
+        # Attempt window move with retry logic
+        for attempt in range(1, MAX_WINDOW_MOVE_ATTEMPTS + 1):
+            try:
+                if DEBUG:
+                    print(f"[WINDOW-MOVER] Attempt {attempt}/{MAX_WINDOW_MOVE_ATTEMPTS} for '{title}'")
+                
+                restore_if_minimized(hwnd)
+                remove_maximize_state(hwnd)
+                move_window_to_position(hwnd, x, y, w, h, topmost=True, activate=activate)
+                
+                # Wait for window to settle
+                time.sleep(WINDOW_MOVE_VERIFICATION_DELAY)
+                
+                # Verify window moved correctly
+                if verify_window_position(hwnd, x, y, w, h):
+                    print(f"[WINDOW-MOVER] SUCCESS: Moved '{title}' -> ({x},{y},{w},{h}) on attempt {attempt}")
+                    successful_moves.append((hwnd, title))
+                    move_success = True
+                    break
+                else:
+                    if attempt < MAX_WINDOW_MOVE_ATTEMPTS:
+                        print(f"[WINDOW-MOVER] Position verification failed for '{title}', retrying...")
+                    else:
+                        print(f"[WINDOW-MOVER] FAILED: Could not verify position for '{title}' after {MAX_WINDOW_MOVE_ATTEMPTS} attempts")
+                        failed_moves.append((hwnd, title, "position verification failed"))
+                
+            except Exception as e:
+                if attempt < MAX_WINDOW_MOVE_ATTEMPTS:
+                    print(f"[WINDOW-MOVER] Error moving '{title}' (attempt {attempt}): {e}, retrying...")
+                else:
+                    print(f"[WINDOW-MOVER] FAILED: Could not move '{title}' after {MAX_WINDOW_MOVE_ATTEMPTS} attempts: {e}")
+                    failed_moves.append((hwnd, title, str(e)))
+        
+        # Small delay between window moves
+        if move_success:
             time.sleep(0.03)
-        except Exception as e:
-            if DEBUG:
-                print(f"[WINDOW-MOVER] Failed to move '{title}': {e}")
     
-    # Remove topmost from windows that shouldn't have it
+    # Remove topmost from windows that shouldn't have it (only for successful moves)
     time.sleep(0.1)
-    for rule, hwnd, title in assigned:
-        topmost = bool(rule.get("topmost", False))
-        try:
-            if not topmost:
-                flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED
-                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
-        except Exception as e:
-            if DEBUG:
-                print(f"[WINDOW-MOVER] Failed to set final topmost for '{title}': {e}")
+    for hwnd, title in successful_moves:
+        # Find the rule for this window
+        rule = None
+        for r, h, t in assigned:
+            if h == hwnd:
+                rule = r
+                break
+        
+        if rule:
+            topmost = bool(rule.get("topmost", False))
+            try:
+                if not topmost:
+                    flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED
+                    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+            except Exception as e:
+                if DEBUG:
+                    print(f"[WINDOW-MOVER] Failed to set final topmost for '{title}': {e}")
     
-    if DEBUG:
-        print(f"[WINDOW-MOVER] Window arrangement complete")
-    return True
+    # Force crash failed windows if enabled
+    if failed_moves and MAX_FAILED_FORCE_CRASH:
+        for hwnd, title, reason in failed_moves:
+            try:
+                # Extract PID from window title (format: "ProcessID - nickname")
+                pid_match = re.match(r'^(\d+)\s*-\s*.+', title)
+                if pid_match:
+                    pid = int(pid_match.group(1))
+                    print(f"[WINDOW-MOVER] Force crashing failed window '{title}' (PID: {pid}) - {reason}")
+                    log_error(f"WINDOW_FORCE_CRASH: {title} (PID: {pid}) - {reason}")
+                    kill_process_by_pid(pid)
+                else:
+                    print(f"[WINDOW-MOVER] Could not extract PID from '{title}' for force crash")
+                    log_error(f"WINDOW_FORCE_CRASH_FAILED: Could not extract PID from '{title}'")
+            except Exception as e:
+                print(f"[WINDOW-MOVER] Error force crashing '{title}': {e}")
+                log_error(f"WINDOW_FORCE_CRASH_ERROR: {title} - {e}")
+    
+    # Summary
+    print(f"[WINDOW-MOVER] Window arrangement complete: {len(successful_moves)} successful, {len(failed_moves)} failed")
+    if failed_moves and DEBUG:
+        for hwnd, title, reason in failed_moves:
+            print(f"[WINDOW-MOVER]   Failed: '{title}' - {reason}")
+    
+    return len(successful_moves) > 0
 
 def kill_process_by_pid(pid):
     """
@@ -613,6 +929,7 @@ def kill_process_by_pid(pid):
         return result.returncode == 0
     except Exception as e:
         print(f"[ERROR] Failed to kill process {pid}: {e}")
+        log_error(f"PROCESS_KILL_FAILED: PID {pid} - {e}")
         return False
 
 def kill_ffxiv_process():
@@ -632,6 +949,7 @@ def kill_ffxiv_process():
         return result.returncode == 0
     except Exception as e:
         print(f"[ERROR] Failed to kill ffxiv_dx11.exe: {e}")
+        log_error(f"FFXIV_KILL_FAILED: {e}")
         return False
 
 def is_xivlauncher_running():
@@ -744,6 +1062,7 @@ def kill_xivlauncher_process():
         return result.returncode == 0
     except Exception as e:
         print(f"[ERROR] Failed to kill XIVLauncher.exe: {e}")
+        log_error(f"LAUNCHER_KILL_FAILED: {e}")
         return False
 
 def is_dalamud_crash_handler_running():
@@ -803,6 +1122,7 @@ def kill_dalamud_crash_handler_process(pid):
         return result.returncode == 0
     except Exception as e:
         print(f"[ERROR] Failed to kill DalamudCrashHandler.exe (PID {pid}): {e}")
+        log_error(f"CRASH_HANDLER_KILL_FAILED: PID {pid} - {e}")
         return False
 
 def launch_game(nickname):
@@ -815,10 +1135,12 @@ def launch_game(nickname):
 
     if not launcher_path:
         print(f"[ERROR] No launcher path configured for {nickname}")
+        log_error(f"LAUNCH_FAILED_NO_PATH: {nickname} - No launcher path configured in GAME_LAUNCHERS")
         return False
 
     if not os.path.exists(launcher_path):
         print(f"[ERROR] Launcher not found: {launcher_path}")
+        log_error(f"LAUNCH_FAILED_NOT_FOUND: {nickname} - Launcher not found at {launcher_path}")
         return False
 
     try:
@@ -877,6 +1199,7 @@ def launch_game(nickname):
         return True
     except Exception as e:
         print(f"[ERROR] Failed to launch game for {nickname}: {e}")
+        log_error(f"LAUNCH_FAILED_EXCEPTION: {nickname} - {e}")
         return False
 
 def get_process_start_time(pid):
@@ -1250,10 +1573,21 @@ def detect_submarine_processing(account_entry, submarine_state_cache, current_ti
                 print(f"[DEBUG] {nickname}: Initializing cache - {ready_subs} ready, {voyaging_subs} voyaging, 0 newly sent")
             return 0
         
-        # Calculate processed count based on decrease in ready submarines
-        # When ready count decreases, those subs were sent out on voyages
+        # Calculate processed count using BOTH metrics:
+        # 1. Decrease in ready submarines (subs sent without new returns)
+        # 2. Increase in voyaging submarines (subs sent even if others returned)
+        # This catches cases where subs return at same rate they're being sent
         previous_ready = cached_state.get('ready_count', ready_subs)
-        processed_count = max(0, previous_ready - ready_subs)
+        previous_voyaging = cached_state.get('voyaging_count', voyaging_subs)
+        
+        ready_decreased = max(0, previous_ready - ready_subs)
+        voyaging_increased = max(0, voyaging_subs - previous_voyaging)
+        
+        # Use the LARGER of the two metrics to detect activity
+        # This handles both scenarios:
+        # - Subs sent without returns: ready decreases
+        # - Subs sent with simultaneous returns: voyaging increases
+        processed_count = max(ready_decreased, voyaging_increased)
         
         # Update cache with current counts
         submarine_state_cache[nickname] = {
@@ -1543,6 +1877,7 @@ def main():
                 print("[ERROR] Single client mode only supports 1 account.")
                 print(f"[ERROR] Currently configured accounts: {len(account_locations)}")
                 print("[ERROR] Please disable USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME or configure only 1 account.")
+                log_error(f"CONFIG_VALIDATION_FAILED: Single client mode enabled but {len(account_locations)} accounts configured")
                 sys.exit(1)
             print("[INFO] Running in single client mode (USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME=True)")
             print("[INFO] Using default FFXIV window title detection\n")
@@ -1554,9 +1889,9 @@ def main():
         last_launch_time = {}  # Track last launch time for each account to enforce rate limiting
         client_start_times = {}  # Track process start times (will be populated with actual times)
         initial_arrangement_done = False  # Track if we've done initial window arrangement
-        subs_ready_timestamp = {}  # Track when subs first became ready for each account (for force crash monitoring)
+        game_launch_timestamp = {}  # Track when game was launched for each account (for force crash monitoring)
+        last_sub_processed = {}  # Track last time submarine was processed for each account (for force crash monitoring) (negative → positive transitions)
         submarine_state_cache = {}  # Cache submarine return times by nickname to detect processing (negative → positive transitions)
-        last_sub_processed = {}  # Track timestamp of last detected submarine processing by nickname
         launcher_retry_count = {}  # Track launcher retry attempts per account
         launcher_failed_accounts = set()  # Track accounts that have exceeded launcher retry limit
         
@@ -1710,10 +2045,10 @@ def main():
                             if DEBUG:
                                 debug_msg = f"[DEBUG] {nickname}: Already running, skipping"
                                 
-                                # Add force-close timer info if monitoring is active
-                                if nickname in subs_ready_timestamp:
-                                    subs_ready_time = subs_ready_timestamp[nickname]
-                                    monitoring_start_time = subs_ready_time + (CRASH_MONITOR_DELAY * 3600)
+                                # Add force-close timer info if we have a launch timestamp
+                                if nickname in game_launch_timestamp:
+                                    launch_time = game_launch_timestamp[nickname]
+                                    monitoring_start_time = launch_time + (AUTO_LAUNCH_THRESHOLD * 3600)
                                     
                                     if current_time >= monitoring_start_time:
                                         # Monitoring is active - show inactivity timer
@@ -1798,6 +2133,10 @@ def main():
                                     launch_success = True
                                     # Reset launcher retry count on success
                                     launcher_retry_count[nickname] = 0
+                                    # Track game launch timestamp for force-close monitoring
+                                    game_launch_timestamp[nickname] = current_time
+                                    if DEBUG:
+                                        print(f"[FORCE-CRASH] {nickname}: Game launched, crash monitoring will activate in {AUTO_LAUNCH_THRESHOLD * 60:.1f} minutes")
                                 elif needs_launcher_retry:
                                     # Launcher detected - kill it and retry
                                     launcher_retry_count[nickname] += 1
@@ -1806,7 +2145,8 @@ def main():
                                     time.sleep(2)  # Brief wait after killing launcher
                                     
                                     if launcher_retry_count[nickname] >= FORCE_LAUNCHER_RETRY:
-                                        # Max retries reached
+                                        # Max retries reached - log the failure
+                                        log_error(f"LAUNCHER_FAILED: {nickname} - Max launcher retries ({FORCE_LAUNCHER_RETRY}) reached, marking as [LAUNCHER]")
                                         if USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME:
                                             print(f"[AUTO-LAUNCH] Max launcher retries ({FORCE_LAUNCHER_RETRY}) reached for {nickname}")
                                             print(f"[AUTO-LAUNCH] Stopping script - single client mode cannot continue")
@@ -1817,16 +2157,30 @@ def main():
                                             launcher_failed_accounts.add(nickname)
                                         break
                                     else:
+                                        # Before retry, check and update AutologinEnabled if needed
+                                        if ENABLE_AUTOLOGIN_UPDATER:
+                                            print(f"[AUTOLOGIN] Checking AutologinEnabled for {nickname} before retry...")
+                                            check_and_update_autologin(nickname)
                                         print(f"[AUTO-LAUNCH] Retrying {nickname} (attempt {launcher_retry_count[nickname] + 1}/{FORCE_LAUNCHER_RETRY})...")
                                         last_launch_time[nickname] = 0  # Allow immediate retry
                                 else:
                                     # Title check failed without launcher detection
-                                    print(f"[AUTO-LAUNCH] Window title check failed for {nickname}, killing process and will retry...")
-                                    # Kill any ffxiv_dx11.exe process that may be stuck
-                                    kill_ffxiv_process()
-                                    # Reset launch time to allow immediate retry
-                                    last_launch_time[nickname] = 0
-                                    break  # Exit retry loop, will try again on next cycle
+                                    # Log the error for troubleshooting
+                                    log_error(f"WINDOW_TITLE_FAILED: {nickname} - Window title check failed after {MAX_WINDOW_TITLE_RESCAN} attempts")
+                                    
+                                    if USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME:
+                                        # Single client mode: safe to kill the single process
+                                        print(f"[AUTO-LAUNCH] Window title check failed for {nickname}, killing process and will retry...")
+                                        kill_ffxiv_process()
+                                        last_launch_time[nickname] = 0  # Allow immediate retry
+                                    else:
+                                        # Multi-client mode: DO NOT kill all processes!
+                                        # Just mark as failed and let normal rotation continue
+                                        # The game client checker will retry in WINDOW_REFRESH_INTERVAL seconds
+                                        print(f"[AUTO-LAUNCH] Window title check failed for {nickname}, continuing normal rotation...")
+                                        print(f"[AUTO-LAUNCH] Game client checker will retry {nickname} in {WINDOW_REFRESH_INTERVAL} seconds")
+                                        last_launch_time[nickname] = current_time  # Prevent immediate retry spam
+                                    break  # Exit retry loop, continue normal operation
                             else:
                                 print(f"[AUTO-LAUNCH] Failed to launch {nickname}")
                                 last_launch_time[nickname] = current_time  # Record failed attempt to enforce rate limit
@@ -2001,104 +2355,143 @@ def main():
                             print(f"[AUTO-CLOSE] Failed to close {nickname}")
             
             # Force crash timer - check for frozen/stuck clients
-            for account_entry in account_locations:
-                nickname = account_entry["nickname"]
-                include_subs = account_entry.get("include_submarines", True)
-                force247 = account_entry.get("force247uptime", False)
-                auto_path = account_entry["auto_path"]
-                
-                # Skip if submarines disabled
-                if not include_subs:
-                    continue
-                
-                # Get game status
-                game_info = game_status_dict.get(nickname, (None, None))
-                is_running = game_info[0]
-                process_id = game_info[1]
-                
-                # Only check if game is running
-                if not is_running:
-                    # Clean up tracking if game not running
-                    if nickname in subs_ready_timestamp:
-                        del subs_ready_timestamp[nickname]
-                    continue
-                
-                # Get submarine timer data
-                timer_data = get_submarine_timers_for_account(account_entry)
-                ready_subs = timer_data.get("ready_subs", 0)
-                soonest_hours = timer_data.get("soonest_hours")
-                
-                # Only monitor when ENABLE_AUTO_CLOSE is True and in (READY) status - when ready_subs > 0
-                # Stop monitoring when in (WAITING) status or when subs are not ready
-                if ENABLE_AUTO_CLOSE and ready_subs > 0:
-                    # Subs are ready - activate or continue monitoring
-                    if nickname not in subs_ready_timestamp:
-                        # Record timestamp when subs first became ready - start new 30min timer
-                        subs_ready_timestamp[nickname] = current_time
-                        if DEBUG:
-                            print(f"[FORCE-CRASH] {nickname}: Subs ready, starting {CRASH_MONITOR_DELAY}h countdown for monitoring activation")
-                else:
-                    # No ready subs - deactivate monitoring (for all accounts, not just force247uptime)
-                    # This includes (WAITING) status when ready_subs=0 and next sub < AUTO_CLOSE_THRESHOLD
-                    if nickname in subs_ready_timestamp:
-                        del subs_ready_timestamp[nickname]
-                        if DEBUG:
-                            print(f"[FORCE-CRASH] {nickname}: All subs processed, deactivating force crash monitoring")
-                    continue
-                
-                # Check if we should start monitoring (CRASH_MONITOR_DELAY hours after subs became ready)
-                if nickname in subs_ready_timestamp:
-                    subs_ready_time = subs_ready_timestamp[nickname]
-                    monitoring_start_time = subs_ready_time + (CRASH_MONITOR_DELAY * 3600)  # Convert hours to seconds
+            # Only run force-crash monitoring if ENABLE_AUTO_CLOSE is True
+            if ENABLE_AUTO_CLOSE:
+                for account_entry in account_locations:
+                    nickname = account_entry["nickname"]
+                    include_subs = account_entry.get("include_submarines", True)
+                    force247 = account_entry.get("force247uptime", False)
+                    auto_path = account_entry["auto_path"]
                     
-                    # Only monitor if enough time has passed
-                    if current_time >= monitoring_start_time:
-                        # Detect submarine processing activity
-                        processed_count = detect_submarine_processing(account_entry, submarine_state_cache, datetime.datetime.now().timestamp())
-                        
-                        if processed_count > 0:
-                            # Submarine processing detected - reset inactivity timer
-                            last_sub_processed[nickname] = current_time
-                            if DEBUG:
-                                print(f"[FORCE-CRASH] {nickname}: {processed_count} sub(s) processed, resetting inactivity timer")
-                        
-                        # Check inactivity timer if we have a last processed timestamp
+                    # Skip if submarines disabled
+                    if not include_subs:
+                        continue
+                    
+                    # Get game status
+                    game_info = game_status_dict.get(nickname, (None, None))
+                    is_running = game_info[0]
+                    process_id = game_info[1]
+                    
+                    # Only check if game is running
+                    if not is_running:
+                        # Clean up tracking if game not running
+                        if nickname in game_launch_timestamp:
+                            del game_launch_timestamp[nickname]
                         if nickname in last_sub_processed:
-                            minutes_since_processing = (current_time - last_sub_processed[nickname]) / 60
-                            
-                            # Force crash if no processing detected for FORCE_CRASH_INACTIVITY_MINUTES
-                            if minutes_since_processing > FORCE_CRASH_INACTIVITY_MINUTES:
-                                time_since_ready = (current_time - subs_ready_time) / 3600
-                                print(f"\n[FORCE-CRASH] Crashing {nickname} (PID: {process_id}) - No submarine processing for {minutes_since_processing:.1f}m (subs ready for {time_since_ready:.1f}h)")
-                                
-                                # Use appropriate kill method
-                                kill_success = False
-                                if USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME:
-                                    kill_success = kill_ffxiv_process()
-                                else:
-                                    kill_success = kill_process_by_pid(process_id)
-                                
-                                if kill_success:
-                                    closed_pids.add(process_id) if process_id else None
-                                    print(f"[FORCE-CRASH] Successfully crashed {nickname} - likely frozen/stuck, waiting {TIMER_REFRESH_INTERVAL} seconds before relaunch")
-                                    # Update game status immediately
-                                    game_status_dict[nickname] = (False, None)
-                                    # Clear tracking
-                                    if nickname in subs_ready_timestamp:
-                                        del subs_ready_timestamp[nickname]
-                                    if nickname in last_sub_processed:
-                                        del last_sub_processed[nickname]
-                                    # Reset launch time to allow immediate relaunch
-                                    if nickname in last_launch_time:
-                                        del last_launch_time[nickname]
-                                    # Clean up start time tracking
-                                    if USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME:
-                                        if 'ffxiv_single' in client_start_times:
-                                            del client_start_times['ffxiv_single']
-                                    elif process_id and process_id in client_start_times:
-                                        del client_start_times[process_id]
-                                else:
-                                    print(f"[FORCE-CRASH] Failed to crash {nickname}")
+                            del last_sub_processed[nickname]
+                        continue
+                    
+                    # Check if we have a game launch timestamp for this account
+                    if nickname not in game_launch_timestamp:
+                        # Game is running but we don't have launch timestamp (e.g., script restarted while game was running)
+                        # Check actual uptime to determine appropriate launch timestamp
+                        actual_uptime_hours = 0
+                        if USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME:
+                            if 'ffxiv_single' in client_start_times:
+                                actual_uptime_hours = (current_time - client_start_times['ffxiv_single']) / 3600
+                        elif process_id and process_id in client_start_times:
+                            actual_uptime_hours = (current_time - client_start_times[process_id]) / 3600
+                        
+                        # If uptime exceeds AUTO_LAUNCH_THRESHOLD, activate monitoring immediately
+                        if actual_uptime_hours >= AUTO_LAUNCH_THRESHOLD:
+                            # Set launch timestamp in the past so monitoring activates now
+                            game_launch_timestamp[nickname] = current_time - (AUTO_LAUNCH_THRESHOLD * 3600)
+                            if DEBUG:
+                                print(f"[FORCE-CRASH] {nickname}: Game running {actual_uptime_hours:.2f}h (>{AUTO_LAUNCH_THRESHOLD * 60:.0f}min threshold), activating monitoring immediately")
+                        else:
+                            # Set launch timestamp to current time, monitoring will activate after AUTO_LAUNCH_THRESHOLD
+                            game_launch_timestamp[nickname] = current_time
+                            if DEBUG:
+                                print(f"[FORCE-CRASH] {nickname}: Game running {actual_uptime_hours:.2f}h (<{AUTO_LAUNCH_THRESHOLD * 60:.0f}min threshold), monitoring will activate in {(AUTO_LAUNCH_THRESHOLD - actual_uptime_hours) * 60:.1f} minutes")
+                        continue
+                    
+                    # Calculate when monitoring should activate (AUTO_LAUNCH_THRESHOLD hours after game launched)
+                    launch_time = game_launch_timestamp[nickname]
+                    monitoring_start_time = launch_time + (AUTO_LAUNCH_THRESHOLD * 3600)  # Convert hours to seconds
+                    
+                    # Check if monitoring should be active yet
+                    if current_time < monitoring_start_time:
+                        # Not time to monitor yet - still within grace period
+                        if DEBUG:
+                            minutes_until_monitoring = (monitoring_start_time - current_time) / 60
+                            print(f"[FORCE-CRASH] {nickname}: Monitoring will activate in {minutes_until_monitoring:.1f} minutes")
+                        continue
+                    
+                    # Monitoring is now active - check for submarine processing activity
+                    processed_count = detect_submarine_processing(account_entry, submarine_state_cache, datetime.datetime.now().timestamp())
+                    
+                    if processed_count > 0:
+                        # Submarine processing detected - reset inactivity timer
+                        last_sub_processed[nickname] = current_time
+                        if DEBUG:
+                            print(f"[FORCE-CRASH] {nickname}: {processed_count} sub(s) processed, resetting inactivity timer")
+                    
+                    # Get submarine status to determine monitoring applicability
+                    timer_data = get_submarine_timers_for_account(account_entry)
+                    ready_subs = timer_data.get("ready_subs", 0)
+                    soonest_hours = timer_data.get("soonest_hours")
+                    is_waiting = (ready_subs == 0 and soonest_hours is not None and 0 < soonest_hours <= AUTO_CLOSE_THRESHOLD)
+                    
+                    # Skip monitoring if all subs are voyaging (0 ready, not in WAITING)
+                    # This is an idle state - no subs to process, just waiting for returns
+                    if ready_subs == 0 and not is_waiting:
+                        # All submarines voyaging, no ready subs - disable monitoring for idle state
+                        if nickname in last_sub_processed:
+                            del last_sub_processed[nickname]  # Clear timer when entering idle
+                        if DEBUG:
+                            print(f"[FORCE-CRASH] {nickname}: All subs voyaging (0 ready), monitoring disabled")
+                        continue
+                    
+                    # Check if account is in (WAITING) state - extend timer to prevent force-close during legitimate waiting
+                    if is_waiting:
+                        # Account is in (WAITING) state - reset inactivity timer to prevent force-close
+                        last_sub_processed[nickname] = current_time
+                        if DEBUG:
+                            print(f"[FORCE-CRASH] {nickname}: Sub is still waiting. Force close timer reset to {FORCE_CRASH_INACTIVITY_MINUTES} minutes")
+                    
+                    # Initialize last_sub_processed if not set (first check after monitoring activates)
+                    if nickname not in last_sub_processed:
+                        # No processing detected yet, use monitoring start time as baseline
+                        last_sub_processed[nickname] = monitoring_start_time
+                        if DEBUG:
+                            print(f"[FORCE-CRASH] {nickname}: Monitoring activated, starting inactivity timer")
+                    
+                    # Check inactivity timer
+                    minutes_since_processing = (current_time - last_sub_processed[nickname]) / 60
+                    
+                    # Force crash if no processing detected for FORCE_CRASH_INACTIVITY_MINUTES
+                    if minutes_since_processing > FORCE_CRASH_INACTIVITY_MINUTES:
+                        time_since_launch = (current_time - launch_time) / 3600
+                        print(f"\n[FORCE-CRASH] Crashing {nickname} (PID: {process_id}) - No submarine processing for {minutes_since_processing:.1f}m (game running for {time_since_launch:.1f}h)")
+                        
+                        # Use appropriate kill method
+                        kill_success = False
+                        if USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME:
+                            kill_success = kill_ffxiv_process()
+                        else:
+                            kill_success = kill_process_by_pid(process_id)
+                        
+                        if kill_success:
+                            closed_pids.add(process_id) if process_id else None
+                            print(f"[FORCE-CRASH] Successfully crashed {nickname} - likely frozen/stuck, waiting {TIMER_REFRESH_INTERVAL} seconds before relaunch")
+                            # Update game status immediately
+                            game_status_dict[nickname] = (False, None)
+                            # Clear tracking
+                            if nickname in game_launch_timestamp:
+                                del game_launch_timestamp[nickname]
+                            if nickname in last_sub_processed:
+                                del last_sub_processed[nickname]
+                            # Reset launch time to allow immediate relaunch
+                            if nickname in last_launch_time:
+                                del last_launch_time[nickname]
+                            # Clean up start time tracking
+                            if USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME:
+                                if 'ffxiv_single' in client_start_times:
+                                    del client_start_times['ffxiv_single']
+                            elif process_id and process_id in client_start_times:
+                                del client_start_times[process_id]
+                        else:
+                            print(f"[FORCE-CRASH] Failed to crash {nickname}")
             
             # Wait for TIMER_REFRESH_INTERVAL seconds before next timer update
             time.sleep(TIMER_REFRESH_INTERVAL)
