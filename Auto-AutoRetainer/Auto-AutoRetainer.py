@@ -242,6 +242,7 @@ FORCE_CRASH_INACTIVITY_MINUTES = 10 # Force crash client if no submarine process
 
 # Auto-launch game settings
 ENABLE_AUTO_LAUNCH = True       # Enable automatic launching of game clients when submarines are nearly ready
+OTP_LAUNCH_DELAY   = 10         # For 2FA, this is the time delay in seconds between launching the launcher and having it send the 2fa code. Not recommended going below 10 seconds
 AUTO_LAUNCH_THRESHOLD = 0.15    # Launch game if soonest submarine return time is at or below this many hours (0.15h = 9 minutes)
 OPEN_DELAY_THRESHOLD = 60       # Minimum seconds to wait between launching the same account (rate limiting per account, prevents launch spam)
 WINDOW_TITLE_RESCAN = 5         # Seconds to wait between each window title check after launch (polling interval for plugin to rename window)
@@ -313,8 +314,7 @@ GAME_LAUNCHERS = {
     # "Acc3":   rf"C:\Users\{user}\AltData\Acc3.bat",
 }
 
-# Create account lookup dictionary for quick access to account config by nickname
-ACCOUNT_CONFIG = {acc_data["nickname"]: acc_data for acc_data in account_locations}
+# Note: ACCOUNT_CONFIG removed - use account_locations directly for consistency
 
 # ===============================================
 # Logging Functions
@@ -1164,22 +1164,30 @@ def launch_game(nickname):
                 start_new_session=True
             )
 
-        # Check if 2FA is enabled for this account
-        account_config = ACCOUNT_CONFIG.get(nickname)
+        # Check if 2FA is enabled for this account (search account_locations)
+        account_config = None
+        for acc in account_locations:
+            if acc["nickname"] == nickname:
+                account_config = acc
+                break
+
         if account_config and account_config.get("enable_2fa", False):
             keyring_name = account_config.get("keyring_name")
             if not keyring_name:
-                print(f"[ERROR] 2FA enabled for {nickname} but no keyring_name specified")
-                return False
+                print(f"[WARNING] 2FA enabled for {nickname} but no keyring_name specified - skipping OTP")
+                log_error(f"2FA_CONFIG_ERROR: {nickname} - no keyring_name specified")
+                return True  # Continue launch, let user manually enter OTP
 
             # Wait for launcher to initialize
-            print(f"[2FA] Waiting 5 seconds for launcher to initialize...")
-            time.sleep(5)
+            print(f"[2FA] Waiting {OTP_LAUNCH_DELAY} seconds for launcher to initialize...")
+            time.sleep(OTP_LAUNCH_DELAY)
 
             # Get OTP secret from keyring
             otp_secret = keyring.get_password(keyring_name, "otp_secret")
             if not otp_secret:
-                print(f"[ERROR] OTP secret not found in keyring '{keyring_name}' for {nickname}")
+                print(f"[WARNING] OTP secret not found in keyring '{keyring_name}' for {nickname}")
+                print(f"[WARNING] Aborting launch")
+                log_error(f"2FA_KEYRING_ERROR: {nickname} - no OTP secret in keyring '{keyring_name}'")
                 return False
 
             # Generate OTP code
@@ -1191,10 +1199,19 @@ def launch_game(nickname):
             try:
                 resp = requests.get(url, timeout=5)
                 resp.raise_for_status()
-                print(f"[2FA] OTP sent successfully, status {resp.status_code}")
+
+                # Verify OTP was accepted (status 200)
+                if resp.status_code == 200:
+                    print(f"[2FA] OTP accepted successfully (status {resp.status_code})")
+                else:
+                    print(f"[WARNING] OTP sent but received unexpected status {resp.status_code}")
+                    print(f"[WARNING] Continuing launch - you may need to enter OTP manually")
+                    log_error(f"2FA_UNEXPECTED_STATUS: {nickname} - status {resp.status_code}")
             except Exception as e:
-                print(f"[ERROR] Failed to send OTP for {nickname}: {e}")
-                # Continue anyway, the user might need to enter it manually
+                print(f"[WARNING] Failed to send OTP for {nickname}: {e}")
+                print(f"[WARNING] Closing Launcher because OTP failure")
+                kill_xivlauncher_process()
+                log_error(f"2FA_SEND_ERROR: {nickname} - {e}")
 
         return True
     except Exception as e:
