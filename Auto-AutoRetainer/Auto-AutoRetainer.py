@@ -1212,6 +1212,7 @@ def launch_game(nickname):
                 print(f"[WARNING] Closing Launcher because OTP failure")
                 kill_xivlauncher_process()
                 log_error(f"2FA_SEND_ERROR: {nickname} - {e}")
+                return False
 
         return True
     except Exception as e:
@@ -1886,7 +1887,16 @@ def main():
                 print(f"  Starting in {remaining} second{'s' if remaining != 1 else ''}...", end='\r')
                 time.sleep(1)
             print("\n")  # Clear the countdown line
-        
+
+        # Check for and close launcher if it's running with visible windows
+        if is_xivlauncher_running():
+            print("[INFO] XIVLauncher detected as active app - closing before proceeding...")
+            if kill_xivlauncher_process():
+                print("[INFO] XIVLauncher closed successfully")
+                time.sleep(1)  # Brief pause after closing launcher
+            else:
+                print("[WARNING] Failed to close XIVLauncher - proceeding anyway")
+
         # Validate configuration: single client mode requires only 1 account
         if USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME:
             if len(account_locations) > 1:
@@ -2130,10 +2140,28 @@ def main():
                         launch_success = False
                         
                         while not launch_success and launcher_retry_count[nickname] < FORCE_LAUNCHER_RETRY:
+                            # Pre-launch check: detect game window first before launching
+                            is_running, _ = is_ffxiv_running_for_account(nickname)
+                            if is_running:
+                                # Game is already running - close any leftover launcher and skip launch
+                                print(f"[AUTO-LAUNCH] Game window detected for {nickname} - already running")
+                                if is_xivlauncher_running():
+                                    print(f"[AUTO-LAUNCH] Closing leftover launcher window for {nickname}...")
+                                    kill_xivlauncher_process()
+                                launch_success = True
+                                launcher_retry_count[nickname] = 0
+                                break
+
+                            # If launcher is open but no game window, close it first to avoid duplicate launches
+                            if is_xivlauncher_running():
+                                print(f"[AUTO-LAUNCH] Launcher detected without game window for {nickname} - closing before fresh launch...")
+                                kill_xivlauncher_process()
+                                time.sleep(2)  # Brief wait after closing
+
                             print(f"\n[AUTO-LAUNCH] Launching {nickname} - {reason}")
                             if launcher_retry_count[nickname] > 0:
                                 print(f"[AUTO-LAUNCH] Launcher retry attempt {launcher_retry_count[nickname]}/{FORCE_LAUNCHER_RETRY}")
-                            
+
                             if launch_game(nickname):
                                 last_launch_time[nickname] = current_time
                                 print(f"[AUTO-LAUNCH] Successfully launched {nickname}, waiting {OPEN_DELAY_THRESHOLD} seconds for game startup...")
