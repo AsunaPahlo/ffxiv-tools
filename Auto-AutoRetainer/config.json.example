@@ -76,6 +76,14 @@
     "_comment_LOG_FILE": "Log file name for major issues (created in script directory)",
     "LOG_FILE": "arr.log",
 
+    "_section_pushover": "=============================================== Pushover notification settings ===============================================",
+    "_comment_ENABLE_PUSHOVER": "Enable Pushover notifications for logged issues (sends push notification to your phone)",
+    "ENABLE_PUSHOVER": false,
+    "_comment_PUSHOVER_USER_KEY": "Your Pushover user key (from https://pushover.net/)",
+    "PUSHOVER_USER_KEY": "",
+    "_comment_PUSHOVER_API_TOKEN": "Your Pushover application API token",
+    "PUSHOVER_API_TOKEN": "",
+
     "_section_system": "=============================================== System settings ===============================================",
     "_comment_SYSTEM_BOOTUP_DELAY": "Seconds to delay before starting script monitoring (useful for auto-start on system boot, 0 = no delay)",
     "SYSTEM_BOOTUP_DELAY": 0,

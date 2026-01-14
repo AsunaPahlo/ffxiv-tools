@@ -269,6 +269,11 @@ DEBUG = False                   # Show verbose debug output (auto-launch eligibi
 ENABLE_LOGGING = True          # Enable logging major issues to arr.log file (default: False for Auto-AutoRetainer, True for SubTimers scripts)
 LOG_FILE = "arr.log"           # Log file name for major issues (created in script directory)
 
+# Pushover notification settings
+ENABLE_PUSHOVER = False        # Enable Pushover notifications for logged issues (sends push notification to your phone)
+PUSHOVER_USER_KEY = ""         # Your Pushover user key (from https://pushover.net/)
+PUSHOVER_API_TOKEN = ""        # Your Pushover application API token
+
 # System settings
 SYSTEM_BOOTUP_DELAY = 0         # Seconds to delay before starting script monitoring (useful for auto-start on system boot, 0 = no delay)
 
@@ -328,6 +333,7 @@ def _load_external_config():
     global ENABLE_WINDOW_LAYOUT, WINDOW_LAYOUT, WINDOW_MOVER_DIR, MAX_WINDOW_MOVE_ATTEMPTS
     global WINDOW_MOVE_VERIFICATION_DELAY, MAX_FAILED_FORCE_CRASH
     global DEBUG, ENABLE_LOGGING, LOG_FILE, SYSTEM_BOOTUP_DELAY, USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME
+    global ENABLE_PUSHOVER, PUSHOVER_USER_KEY, PUSHOVER_API_TOKEN
     global account_locations, GAME_LAUNCHERS
 
     config_path = Path(__file__).parent / "config.json"
@@ -379,6 +385,9 @@ def _load_external_config():
     if "DEBUG" in config: DEBUG = config["DEBUG"]
     if "ENABLE_LOGGING" in config: ENABLE_LOGGING = config["ENABLE_LOGGING"]
     if "LOG_FILE" in config: LOG_FILE = config["LOG_FILE"]
+    if "ENABLE_PUSHOVER" in config: ENABLE_PUSHOVER = config["ENABLE_PUSHOVER"]
+    if "PUSHOVER_USER_KEY" in config: PUSHOVER_USER_KEY = config["PUSHOVER_USER_KEY"]
+    if "PUSHOVER_API_TOKEN" in config: PUSHOVER_API_TOKEN = config["PUSHOVER_API_TOKEN"]
     if "SYSTEM_BOOTUP_DELAY" in config: SYSTEM_BOOTUP_DELAY = config["SYSTEM_BOOTUP_DELAY"]
     if "USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME" in config: USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME = config["USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME"]
 
@@ -415,10 +424,42 @@ _load_external_config()
 # ===============================================
 # Logging Functions
 # ===============================================
+def send_pushover(message):
+    """
+    Send a Pushover notification.
+    Only sends if ENABLE_PUSHOVER is True and credentials are configured.
+    """
+    if not ENABLE_PUSHOVER:
+        return
+    if not PUSHOVER_USER_KEY or not PUSHOVER_API_TOKEN:
+        if DEBUG:
+            print("[DEBUG] Pushover enabled but credentials not configured")
+        return
+    try:
+        response = requests.post(
+            "https://api.pushover.net/1/messages.json",
+            data={
+                "token": PUSHOVER_API_TOKEN,
+                "user": PUSHOVER_USER_KEY,
+                "title": "Auto-AutoRetainer",
+                "message": message,
+            },
+            timeout=10
+        )
+        if DEBUG:
+            if response.status_code == 200:
+                print(f"[DEBUG] Pushover notification sent successfully")
+            else:
+                print(f"[DEBUG] Pushover notification failed: {response.status_code} {response.text}")
+    except Exception as e:
+        if DEBUG:
+            print(f"[DEBUG] Failed to send Pushover notification: {e}")
+
 def log_error(message):
     """
     Log major issues to arr.log file with timestamp.
     Only logs if ENABLE_LOGGING is True.
+    Also sends Pushover notification if ENABLE_PUSHOVER is True.
     """
     if not ENABLE_LOGGING:
         return
@@ -430,6 +471,9 @@ def log_error(message):
     except Exception as e:
         if DEBUG:
             print(f"[DEBUG] Failed to write to log file: {e}")
+
+    # Send Pushover notification
+    send_pushover(message)
 
 # ===============================================
 # Autologin Updater Functions
