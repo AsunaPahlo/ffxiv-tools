@@ -728,9 +728,10 @@ If your account already has 2FA enabled, you must disable it first:
    ```
 3. Save the file
 4. Run the script: `python Set_2FA_Key.py`
-5. The script will securely store your key in Windows Credential Manager
-6. **Verify:** Open "Credential Manager" in Windows, click "Windows Credentials" at the top, and look for your key under "Generic Credentials"
-7. **Security:** After confirming 2FA works in Auto-Autoretainer, delete the secret key value from `Set_2FA_Key.py` - keeping it in plain text is a security risk
+5. The window will flash and disappear very quickly. Don't run it twice, just check the credential manager in the next steps to see if it worked.
+6. The script will securely store your key in Windows Credential Manager
+7. **Verify:** Open "Credential Manager" in Windows, click "Windows Credentials" at the top, and look for your key under "Generic Credentials"
+8. **Security:** After confirming 2FA works in Auto-Autoretainer, delete the secret key value from `Set_2FA_Key.py` - keeping it in plain text is a security risk
 
 **Note:** Each FFXIV account with 2FA needs its own unique keyring name.
 
