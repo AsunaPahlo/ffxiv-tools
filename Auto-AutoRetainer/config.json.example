@@ -1,0 +1,115 @@
+{
+    "_readme": "Auto-AutoRetainer External Configuration File",
+    "_usage": "Copy this file to config.json to use external configuration",
+    "_note": "Any setting not included will use the value from the Python script",
+    "_path_placeholders": "Use {user} in paths to substitute with current Windows username",
+
+    "_section_display": "=============================================== Display settings ===============================================",
+    "_comment_NICKNAME_WIDTH": "Display column width for account nicknames in terminal output",
+    "NICKNAME_WIDTH": 5,
+    "_comment_SUBS_COUNT_WIDTH": "Display column width for submarine count (e.g., 'Subs: 4/4')",
+    "SUBS_COUNT_WIDTH": 11,
+    "_comment_HOURS_WIDTH": "Display column width for submarine return times/ready status",
+    "HOURS_WIDTH": 24,
+    "_comment_STATUS_WIDTH": "Display column width for game status (Running/Closed/Up 24/7)",
+    "STATUS_WIDTH": 10,
+    "_comment_PID_WIDTH": "Display column width for process ID (e.g., 'PID: 12345')",
+    "PID_WIDTH": 11,
+
+    "_section_timer": "=============================================== Timer settings ===============================================",
+    "_comment_TIMER_REFRESH_INTERVAL": "Main loop cycle time (seconds) - updates submarine timers and checks for launch/close conditions",
+    "TIMER_REFRESH_INTERVAL": 30,
+    "_comment_WINDOW_REFRESH_INTERVAL": "How often (seconds) to scan running processes to detect which game clients are open/closed",
+    "WINDOW_REFRESH_INTERVAL": 60,
+
+    "_section_auto_close": "=============================================== Auto-close game settings ===============================================",
+    "_comment_ENABLE_AUTO_CLOSE": "Enable automatic closing of game clients when submarines are not ready soon",
+    "ENABLE_AUTO_CLOSE": true,
+    "_comment_AUTO_CLOSE_THRESHOLD": "Close game if soonest submarine return time exceeds this many hours (0.5h = 30 minutes)",
+    "AUTO_CLOSE_THRESHOLD": 0.5,
+    "_comment_MAX_RUNTIME": "Force close any game client that has been running for this many hours (prevents indefinite uptime)",
+    "MAX_RUNTIME": 71,
+    "_comment_FORCE_CRASH_INACTIVITY_MINUTES": "Force crash client if no submarine processing detected for this many minutes (after monitoring activates). Note: Monitoring activates AUTO_LAUNCH_THRESHOLD hours after game launches (not when subs become ready). This ensures crash detection works even if game boots stuck without processing any submarines",
+    "FORCE_CRASH_INACTIVITY_MINUTES": 10,
+
+    "_section_auto_launch": "=============================================== Auto-launch game settings ===============================================",
+    "_comment_ENABLE_AUTO_LAUNCH": "Enable automatic launching of game clients when submarines are nearly ready",
+    "ENABLE_AUTO_LAUNCH": true,
+    "_comment_OTP_LAUNCH_DELAY": "For 2FA, this is the time delay in seconds between launching the launcher and having it send the 2fa code. Not recommended going below 10 seconds",
+    "OTP_LAUNCH_DELAY": 10,
+    "_comment_AUTO_LAUNCH_THRESHOLD": "Launch game if soonest submarine return time is at or below this many hours (0.15h = 9 minutes)",
+    "AUTO_LAUNCH_THRESHOLD": 0.15,
+    "_comment_OPEN_DELAY_THRESHOLD": "Minimum seconds to wait between launching the same account (rate limiting per account, prevents launch spam)",
+    "OPEN_DELAY_THRESHOLD": 60,
+    "_comment_WINDOW_TITLE_RESCAN": "Seconds to wait between each window title check after launch (polling interval for plugin to rename window)",
+    "WINDOW_TITLE_RESCAN": 5,
+    "_comment_MAX_WINDOW_TITLE_RESCAN": "Maximum number of title check attempts before giving up (20 checks x 5s = 100s timeout, then kills stuck process and retries)",
+    "MAX_WINDOW_TITLE_RESCAN": 20,
+    "_comment_FORCE_LAUNCHER_RETRY": "Maximum number of launcher retry attempts when XIVLauncher.exe opens instead of game (prevents stuck accounts)",
+    "FORCE_LAUNCHER_RETRY": 3,
+    "_comment_ENABLE_AUTOLOGIN_UPDATER": "Enable automatic updating of AutologinEnabled in launcherConfigV3.json when launcher opens instead of game. When True: After launcher fail 1/3 or 2/3, checks and updates AutologinEnabled to 'true' before retry. This fixes rare cases where launcher opens because autologin was disabled in the config",
+    "ENABLE_AUTOLOGIN_UPDATER": true,
+    "_comment_MAX_CLIENTS": "Maximum concurrent running game clients allowed (0 = unlimited, N = caps at N clients for hardware-limited systems). When limit reached, prioritizes force247uptime accounts first, then submarine-ready accounts",
+    "MAX_CLIENTS": 0,
+
+    "_section_window": "=============================================== Window arrangement settings ===============================================",
+    "_comment_ENABLE_WINDOW_LAYOUT": "Enable automatic positioning/sizing of game windows after launch (requires window layout JSON files)",
+    "ENABLE_WINDOW_LAYOUT": false,
+    "_comment_WINDOW_LAYOUT": "Which layout configuration to use: 'left' (SubTimers_left) or 'main' (SubTimers_main)",
+    "WINDOW_LAYOUT": "main",
+    "_comment_WINDOW_MOVER_DIR": "Directory containing window layout JSON files (windows_layout_left.json / windows_layout_main.json). Leave empty to use script directory",
+    "WINDOW_MOVER_DIR": "",
+    "_comment_MAX_WINDOW_MOVE_ATTEMPTS": "Maximum number of window move attempts per client (1-3 recommended, prevents script freeze on unresponsive windows)",
+    "MAX_WINDOW_MOVE_ATTEMPTS": 3,
+    "_comment_WINDOW_MOVE_VERIFICATION_DELAY": "Seconds to wait after window move before verifying position (allows window to settle)",
+    "WINDOW_MOVE_VERIFICATION_DELAY": 1,
+    "_comment_MAX_FAILED_FORCE_CRASH": "Force crash client after MAX_WINDOW_MOVE_ATTEMPTS failures (script will relaunch on next cycle if game should be running)",
+    "MAX_FAILED_FORCE_CRASH": false,
+
+    "_section_debug": "=============================================== Debug settings ===============================================",
+    "_comment_DEBUG": "Show verbose debug output (auto-launch eligibility checks, window detection, process tracking, etc.)",
+    "DEBUG": false,
+
+    "_section_logging": "=============================================== Logging settings ===============================================",
+    "_comment_ENABLE_LOGGING": "Enable logging major issues to arr.log file (default: False for Auto-AutoRetainer, True for SubTimers scripts)",
+    "ENABLE_LOGGING": true,
+    "_comment_LOG_FILE": "Log file name for major issues (created in script directory)",
+    "LOG_FILE": "arr.log",
+
+    "_section_system": "=============================================== System settings ===============================================",
+    "_comment_SYSTEM_BOOTUP_DELAY": "Seconds to delay before starting script monitoring (useful for auto-start on system boot, 0 = no delay)",
+    "SYSTEM_BOOTUP_DELAY": 0,
+
+    "_section_single_client": "=============================================== Single client mode settings ===============================================",
+    "_comment_USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME": "If True: uses default 'FINAL FANTASY XIV' window title (single account mode, no Dalamud renaming needed). If False: expects 'ProcessID - nickname' window titles (multi-account mode, requires Dalamud plugin for window renaming). Single client mode is intended for single-account setups where the game window title does not need to be customized",
+    "USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME": true,
+
+    "_section_accounts": "=============================================== Account locations ===============================================",
+    "_comment_account_locations": "Account configuration - matches AR Parser order. 2FA Configuration: Set enable_2fa=true and keyring_name='your_keyring_name' to enable automatic OTP sending. Keyring setup: Use keyring.set_password('your_keyring_name', 'otp_secret', 'YOUR_OTP_SECRET_HERE') to store your secret",
+    "account_locations": [
+        {
+            "nickname": "Main",
+            "pluginconfigs_path": "C:\\Users\\{user}\\AppData\\Roaming\\XIVLauncher\\pluginConfigs",
+            "include_submarines": true,
+            "force247uptime": false,
+            "enable_2fa": false,
+            "keyring_name": null
+        },
+        {
+            "_comment": "Example additional account with 2FA enabled",
+            "nickname": "Acc1",
+            "pluginconfigs_path": "C:\\Users\\{user}\\AltData\\Acc1\\pluginConfigs",
+            "include_submarines": true,
+            "force247uptime": false,
+            "enable_2fa": true,
+            "keyring_name": "ffxiv_acc1"
+        }
+    ],
+
+    "_section_launchers": "=============================================== Game launchers ===============================================",
+    "_comment_game_launchers": "Game launcher paths for each account (update these paths to your actual game launchers)",
+    "game_launchers": {
+        "Main": "C:\\Users\\{user}\\AppData\\Local\\XIVLauncher\\XIVLauncher.exe",
+        "Acc1": "C:\\Users\\{user}\\AltData\\Acc1.bat"
+    }
+}

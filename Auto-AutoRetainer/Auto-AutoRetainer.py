@@ -314,7 +314,103 @@ GAME_LAUNCHERS = {
     # "Acc3":   rf"C:\Users\{user}\AltData\Acc3.bat",
 }
 
-# Note: ACCOUNT_CONFIG removed - use account_locations directly for consistency
+# ===============================================
+# External Config File Override (config.json)
+# If config.json exists, it will override the above settings
+# ===============================================
+def _load_external_config():
+    """Load config.json if it exists and override settings."""
+    global NICKNAME_WIDTH, SUBS_COUNT_WIDTH, HOURS_WIDTH, STATUS_WIDTH, PID_WIDTH
+    global TIMER_REFRESH_INTERVAL, WINDOW_REFRESH_INTERVAL
+    global ENABLE_AUTO_CLOSE, AUTO_CLOSE_THRESHOLD, MAX_RUNTIME, FORCE_CRASH_INACTIVITY_MINUTES
+    global ENABLE_AUTO_LAUNCH, OTP_LAUNCH_DELAY, AUTO_LAUNCH_THRESHOLD, OPEN_DELAY_THRESHOLD
+    global WINDOW_TITLE_RESCAN, MAX_WINDOW_TITLE_RESCAN, FORCE_LAUNCHER_RETRY, ENABLE_AUTOLOGIN_UPDATER, MAX_CLIENTS
+    global ENABLE_WINDOW_LAYOUT, WINDOW_LAYOUT, WINDOW_MOVER_DIR, MAX_WINDOW_MOVE_ATTEMPTS
+    global WINDOW_MOVE_VERIFICATION_DELAY, MAX_FAILED_FORCE_CRASH
+    global DEBUG, ENABLE_LOGGING, LOG_FILE, SYSTEM_BOOTUP_DELAY, USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME
+    global account_locations, GAME_LAUNCHERS
+
+    config_path = Path(__file__).parent / "config.json"
+    if not config_path.exists():
+        return
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        print(f"[CONFIG] Loaded configuration from {config_path}")
+    except json.JSONDecodeError as e:
+        print(f"[CONFIG] Error parsing config.json: {e}")
+        print("[CONFIG] Please fix the JSON syntax error and try again.")
+        input("\nPress Enter to exit...")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[CONFIG] Error reading config.json: {e}")
+        print("[CONFIG] Please fix the error and try again.")
+        input("\nPress Enter to exit...")
+        sys.exit(1)
+
+    # Override settings if present in config
+    if "NICKNAME_WIDTH" in config: NICKNAME_WIDTH = config["NICKNAME_WIDTH"]
+    if "SUBS_COUNT_WIDTH" in config: SUBS_COUNT_WIDTH = config["SUBS_COUNT_WIDTH"]
+    if "HOURS_WIDTH" in config: HOURS_WIDTH = config["HOURS_WIDTH"]
+    if "STATUS_WIDTH" in config: STATUS_WIDTH = config["STATUS_WIDTH"]
+    if "PID_WIDTH" in config: PID_WIDTH = config["PID_WIDTH"]
+    if "TIMER_REFRESH_INTERVAL" in config: TIMER_REFRESH_INTERVAL = config["TIMER_REFRESH_INTERVAL"]
+    if "WINDOW_REFRESH_INTERVAL" in config: WINDOW_REFRESH_INTERVAL = config["WINDOW_REFRESH_INTERVAL"]
+    if "ENABLE_AUTO_CLOSE" in config: ENABLE_AUTO_CLOSE = config["ENABLE_AUTO_CLOSE"]
+    if "AUTO_CLOSE_THRESHOLD" in config: AUTO_CLOSE_THRESHOLD = config["AUTO_CLOSE_THRESHOLD"]
+    if "MAX_RUNTIME" in config: MAX_RUNTIME = config["MAX_RUNTIME"]
+    if "FORCE_CRASH_INACTIVITY_MINUTES" in config: FORCE_CRASH_INACTIVITY_MINUTES = config["FORCE_CRASH_INACTIVITY_MINUTES"]
+    if "ENABLE_AUTO_LAUNCH" in config: ENABLE_AUTO_LAUNCH = config["ENABLE_AUTO_LAUNCH"]
+    if "OTP_LAUNCH_DELAY" in config: OTP_LAUNCH_DELAY = config["OTP_LAUNCH_DELAY"]
+    if "AUTO_LAUNCH_THRESHOLD" in config: AUTO_LAUNCH_THRESHOLD = config["AUTO_LAUNCH_THRESHOLD"]
+    if "OPEN_DELAY_THRESHOLD" in config: OPEN_DELAY_THRESHOLD = config["OPEN_DELAY_THRESHOLD"]
+    if "WINDOW_TITLE_RESCAN" in config: WINDOW_TITLE_RESCAN = config["WINDOW_TITLE_RESCAN"]
+    if "MAX_WINDOW_TITLE_RESCAN" in config: MAX_WINDOW_TITLE_RESCAN = config["MAX_WINDOW_TITLE_RESCAN"]
+    if "FORCE_LAUNCHER_RETRY" in config: FORCE_LAUNCHER_RETRY = config["FORCE_LAUNCHER_RETRY"]
+    if "ENABLE_AUTOLOGIN_UPDATER" in config: ENABLE_AUTOLOGIN_UPDATER = config["ENABLE_AUTOLOGIN_UPDATER"]
+    if "MAX_CLIENTS" in config: MAX_CLIENTS = config["MAX_CLIENTS"]
+    if "ENABLE_WINDOW_LAYOUT" in config: ENABLE_WINDOW_LAYOUT = config["ENABLE_WINDOW_LAYOUT"]
+    if "WINDOW_LAYOUT" in config: WINDOW_LAYOUT = config["WINDOW_LAYOUT"]
+    if "WINDOW_MOVER_DIR" in config: WINDOW_MOVER_DIR = Path(config["WINDOW_MOVER_DIR"])
+    if "MAX_WINDOW_MOVE_ATTEMPTS" in config: MAX_WINDOW_MOVE_ATTEMPTS = config["MAX_WINDOW_MOVE_ATTEMPTS"]
+    if "WINDOW_MOVE_VERIFICATION_DELAY" in config: WINDOW_MOVE_VERIFICATION_DELAY = config["WINDOW_MOVE_VERIFICATION_DELAY"]
+    if "MAX_FAILED_FORCE_CRASH" in config: MAX_FAILED_FORCE_CRASH = config["MAX_FAILED_FORCE_CRASH"]
+    if "DEBUG" in config: DEBUG = config["DEBUG"]
+    if "ENABLE_LOGGING" in config: ENABLE_LOGGING = config["ENABLE_LOGGING"]
+    if "LOG_FILE" in config: LOG_FILE = config["LOG_FILE"]
+    if "SYSTEM_BOOTUP_DELAY" in config: SYSTEM_BOOTUP_DELAY = config["SYSTEM_BOOTUP_DELAY"]
+    if "USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME" in config: USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME = config["USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME"]
+
+    # Override account_locations if present
+    if "account_locations" in config:
+        new_locations = []
+        for acc_config in config["account_locations"]:
+            nickname = acc_config.get("nickname", "Unknown")
+            pluginconfigs_path = acc_config.get("pluginconfigs_path", "")
+            pluginconfigs_path = os.path.expandvars(pluginconfigs_path)
+            pluginconfigs_path = pluginconfigs_path.replace("{user}", user)
+            new_locations.append(acc(
+                nickname=nickname,
+                pluginconfigs_path=pluginconfigs_path,
+                include_submarines=acc_config.get("include_submarines", True),
+                force247uptime=acc_config.get("force247uptime", False),
+                enable_2fa=acc_config.get("enable_2fa", False),
+                keyring_name=acc_config.get("keyring_name", None)
+            ))
+        account_locations = new_locations
+
+    # Override game_launchers if present
+    if "game_launchers" in config:
+        new_launchers = {}
+        for nickname, path in config["game_launchers"].items():
+            path = os.path.expandvars(path)
+            path = path.replace("{user}", user)
+            new_launchers[nickname] = path
+        GAME_LAUNCHERS = new_launchers
+
+# Load external config if it exists
+_load_external_config()
 
 # ===============================================
 # Logging Functions
