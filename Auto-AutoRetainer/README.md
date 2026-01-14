@@ -78,7 +78,6 @@ A comprehensive automation script that monitors submarine return times across mu
 
 **Required Plugin Configuration:**
 - **AutoRetainer Multi-Mode**: Must be enabled and set to auto-enable, enable Wait on login screen in common settings
-- **No 2FA**: Two-factor authentication must be disabled on accounts
 - **Autologging Enabled**: XIVLauncher must have autologin configured for each account
 
 ---
@@ -632,6 +631,175 @@ USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME = False  # Window detection mode
 - Cannot run multiple accounts simultaneously
 - Script will exit with error if multiple accounts are configured
 - Requires `psutil` package for uptime tracking (install with: `pip install psutil`)
+
+---
+
+## External Configuration File (Optional)
+
+Instead of editing the Python script directly, you can use an external `config.json` file to override settings.
+
+### Setup
+
+1. Copy `config.json.example` to `config.json` in the same folder as the script
+2. Edit only the settings you want to change
+3. Any settings not in `config.json` will use the values from the Python script
+
+### Path Placeholders
+
+Use `{user}` in paths to automatically substitute the current Windows username:
+```json
+"pluginconfigs_path": "C:\\Users\\{user}\\AppData\\Roaming\\XIVLauncher\\pluginConfigs"
+```
+
+### Example Minimal Config
+
+```json
+{
+    "ENABLE_AUTO_LAUNCH": true,
+    "AUTO_LAUNCH_THRESHOLD": 0.15,
+    "DEBUG": false,
+
+    "account_locations": [
+        {
+            "nickname": "Main",
+            "pluginconfigs_path": "C:\\Users\\{user}\\AppData\\Roaming\\XIVLauncher\\pluginConfigs",
+            "include_submarines": true,
+            "force247uptime": false
+        }
+    ],
+
+    "game_launchers": {
+        "Main": "C:\\Users\\{user}\\AppData\\Local\\XIVLauncher\\XIVLauncher.exe"
+    }
+}
+```
+
+### Notes
+
+- If `config.json` has a syntax error, the script will display the error and exit
+- The script prints `[CONFIG] Loaded configuration from ...` when using an external config
+- See `config.json.example` for all available settings with descriptions
+
+---
+
+## 2FA Setup
+
+This guide explains how to set up Two-Factor Authentication (2FA) for use with Auto-AutoRetainer. The script can automatically generate and send OTP codes when launching the game.
+
+### Prerequisites
+
+- Windows operating system
+- Python with the `keyring` package installed (`pip install keyring`)
+- The `Set_2FA_Key.py` script (included in this repository)
+- **Your account must NOT have 2FA enabled yet** - if it does, disable it first before continuing
+
+### Step 1: Disable Existing 2FA (If Applicable)
+
+If your account already has 2FA enabled, you must disable it first:
+1. Log into your Square Enix account
+2. Navigate to One-Time Password settings
+3. Remove/disable the existing authenticator
+4. Proceed to Step 2 once 2FA is fully disabled
+
+### Step 2: Get Your Authentication Key
+
+**⚠️ Important:** Do not navigate away from the Mogstation or click the back button during this process - doing so will regenerate a new key and invalidate the one you copied.
+
+1. Log into your account on the [Mogstation website](https://www.mogstation.com)
+2. Navigate to: https://secure.square-enix.com/account/app/svc/otpTop
+3. Click on **"Software Authenticator"** option
+4. Click **"Software Authenticator Registration"**
+5. On the next page, you'll see a QR code - **do not scan it**
+6. Click **"Unable to Scan QR Code"**
+7. The next page will display your **Authentication Key** - this is the secret key you need
+8. **Copy this key into a Notepad document** and remove any spaces from it
+9. Open your phone's authenticator app (Google Authenticator, Authy, etc.)
+10. Choose "Add account" or "Enter manually"
+11. Enter the authentication key you just copied - your phone will now generate 6-digit codes
+12. On the Mogstation site, Press **Next** and enter the 2fa code your phone provides
+13. It should now say you are now setup for 2fa
+
+
+
+### Step 3: Store the Key in Windows
+
+1. Open `Set_2FA_Key.py` in a text editor
+2. Set your values using the key we put in Notepad above:
+   ```python
+   # Give your key a unique name (e.g., "ffxiv_main_2fa", "ffxiv_acc1_2fa")
+   keyring_name = "ffxiv_main_2fa"
+
+   # Paste your authentication key here (with spaces removed)
+   secret_key = "YOURAUTHENTICATIONKEYHERE"
+   ```
+3. Save the file
+4. Run the script: `python Set_2FA_Key.py`
+5. The script will securely store your key in Windows Credential Manager
+6. **Verify:** Open "Credential Manager" in Windows, click "Windows Credentials" at the top, and look for your key under "Generic Credentials"
+7. **Security:** After confirming 2FA works in Auto-Autoretainer, delete the secret key value from `Set_2FA_Key.py` - keeping it in plain text is a security risk
+
+**Note:** Each FFXIV account with 2FA needs its own unique keyring name.
+
+### Step 5: Configure Auto-AutoRetainer
+
+Edit your configuration (either in `Auto-AutoRetainer.py` or `config.json`):
+
+**In Python script:**
+```python
+account_locations = [
+    acc("Main", f"C:\\Users\\{user}\\AppData\\Roaming\\XIVLauncher\\pluginConfigs",
+        include_submarines=True, force247uptime=False, enable_2fa=True, keyring_name="ffxiv_main_2fa"),
+]
+```
+
+**In config.json:**
+```json
+"account_locations": [
+    {
+        "nickname": "Main",
+        "pluginconfigs_path": "C:\\Users\\{user}\\AppData\\Roaming\\XIVLauncher\\pluginConfigs",
+        "include_submarines": true,
+        "force247uptime": false,
+        "enable_2fa": true,
+        "keyring_name": "ffxiv_main_2fa"
+    }
+]
+```
+
+### Timing Configuration
+
+If the script sends the OTP code before the launcher is ready to receive it, increase the delay:
+
+```python
+OTP_LAUNCH_DELAY = 10  # Seconds to wait after launching before sending OTP (default: 10)
+```
+
+Or in `config.json`:
+```json
+"OTP_LAUNCH_DELAY": 10
+```
+
+**Note:** Going below 10 seconds is not recommended as the launcher may not be ready.
+
+### Troubleshooting 2FA
+
+**OTP code rejected:**
+- Ensure your system clock is accurate (OTP codes are time-based)
+- Verify the authentication key was copied correctly without extra spaces
+- Check that the keyring_name in your config matches what you set in `Set_2FA_Key.py`
+
+**Code sent too early:**
+- Increase `OTP_LAUNCH_DELAY` to give the launcher more time to load
+
+**"Keyring not found" error:**
+- Run `Set_2FA_Key.py` again to store the key
+- Verify the keyring_name matches exactly (case-sensitive)
+
+**Key became invalid:**
+- If you navigated away during registration, the key was regenerated
+- Disable 2FA on your account and start the process over from Step 2
+
+
 
 ---
 
