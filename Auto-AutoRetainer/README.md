@@ -1,4 +1,4 @@
-# Auto-AutoRetainer v1.23 - FFXIV Submarine Automation System
+# Auto-AutoRetainer v1.24 - FFXIV Submarine Automation System
 
 **Automated FFXIV Submarine Management System**
 
@@ -371,7 +371,7 @@ public unsafe sealed class RenameWindow : SplatoonScript
 **AutoRetainer Configuration Requirements:**
 
 1. **Enable Multi-Mode:**
-   - Open AutoRetainer settings Multi Mode > Commonn Settings
+   - Open AutoRetainer settings Multi Mode > Common Settings
    - Enable Game Startup, Enable Multi Mode on Game Boot
    - This allows AutoRetainer to automatically handle sub processing across characters
 
@@ -389,24 +389,18 @@ public unsafe sealed class RenameWindow : SplatoonScript
 
 **For Full Automation, You MUST:**
 
-1. **Disable 2FA (Two-Factor Authentication):**
-   - Log into your Square Enix account management
-   - Navigate to security settings
-   - **Disable** One-Time Password (2FA) for each account
-   - **Warning:** This reduces account security. Use at your own risk.
-
-2. **Enable XIVLauncher Autologin:**
+1. **Enable XIVLauncher Autologin:**
    - Open XIVLauncher settings
    - Enable "Log in automatically" option
    - Save your username and password
    - Test that the game launches and logs in automatically
 
-3. **Configure Alt Account Autologin:**
+2. **Configure Alt Account Autologin:**
    - Each alt account data folder must have its own saved credentials
    - Test each batch file launcher to verify autologin works
    - Game should launch and log in without any manual input
 
-4. **Verify Full Automation:**
+3. **Verify Full Automation:**
    - Close all FFXIV instances
    - Run one of your batch file launchers
    - Confirm the game:
@@ -957,11 +951,10 @@ Based on known voyage routes:
 3. Ensure characters have submarines unlocked and deployed
 4. Test AutoRetainer manually before using automation
 
-### 2FA/Login Issues
-1. **Disable 2FA** on all accounts (required for full automation)
-2. Ensure XIVLauncher has saved credentials for each account
-3. Test autologin by running launcher manually
-4. Check that no login prompts appear during launch
+### Login Issues
+1. Ensure XIVLauncher has saved credentials for each account
+2. Test autologin by running launcher manually
+3. Check that no login prompts appear during launch (unless it's a 2FA code prompt if expected)
 
 ---
 
