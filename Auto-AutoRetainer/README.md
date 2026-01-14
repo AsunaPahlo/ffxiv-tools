@@ -731,7 +731,9 @@ If your account already has 2FA enabled, you must disable it first:
 5. The window will flash and disappear very quickly. Don't run it twice, just check the credential manager in the next steps to see if it worked.
 6. The script will securely store your key in Windows Credential Manager
 7. **Verify:** Open "Credential Manager" in Windows, click "Windows Credentials" at the top, and look for your key under "Generic Credentials"
-8. **Security:** After confirming 2FA works in Auto-Autoretainer, delete the secret key value from `Set_2FA_Key.py` - keeping it in plain text is a security risk
+8. Make sure to set the launcher setting for "Use One-Time-Passwords" and "Log in automatically" and verify you can login with your phone authenticator
+9. In XIVLauncher, `Navigate to settings -> Game` and enable the "Enable XL Authenticator app/OTP macro support" setting and click the Save checkmark
+10. **Security:** After confirming 2FA works in Auto-Autoretainer, delete the secret key value from `Set_2FA_Key.py` - keeping it in plain text is a security risk
 
 **Note:** Each FFXIV account with 2FA needs its own unique keyring name.
 
