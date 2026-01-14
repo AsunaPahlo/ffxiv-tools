@@ -27,13 +27,23 @@
 # labeled with "ProcessID - nickname" format, autologging enabled without 2FA, and AutoRetainer multi-mode auto-enabled
 # for full automation. See README.md for complete setup instructions.
 #
-# Auto-AutoRetainer v1.23
+# Auto-AutoRetainer v1.24
 # Automated FFXIV Submarine Management System
 # Created by: https://github.com/xa-io
-# Last Updated: 2026-01-11 07:00:00
+# Last Updated: 2026-01-14 11:00:00
 #
 # ## Release Notes ##
 #
+# v1.24 - Added external configuration file support (config.json)
+#         Settings can now be configured via config.json instead of editing the Python script to allow easier updating of the main script
+#         Any setting not in config.json falls back to built-in settings
+#         Added Pushover notification support for logged issues
+#         Sends push notifications to your phone when major issues are logged
+#         Added 2FA/OTP support for accounts with two-factor authentication enabled
+#         Automatically generates and sends OTP codes when launching games
+#         OTP secrets stored securely in Windows Credential Manager via keyring
+#         Added OTP_LAUNCH_DELAY setting to control timing of OTP code submission
+#         Added config.json.example with all settings documented
 # v1.23 - Critical bug fix: Window title failure no longer kills all running game clients
 #         In multi-client mode, failing to launch one account no longer closes other running games
 #         Added ENABLE_AUTOLOGIN_UPDATER to auto-fix launcher config when game fails to open
