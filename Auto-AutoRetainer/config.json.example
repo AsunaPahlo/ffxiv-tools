@@ -5,6 +5,7 @@
     "HOURS_WIDTH": 24,
     "STATUS_WIDTH": 10,
     "PID_WIDTH": 11,
+    "WINDOW_WIDTH": 16,
     "TIMER_REFRESH_INTERVAL": 30,
     "WINDOW_REFRESH_INTERVAL": 60,
     "ENABLE_AUTO_CLOSE": true,
@@ -53,7 +54,13 @@
             "include_submarines": true,
             "force247uptime": false,
             "enable_2fa": false,
-            "keyring_name": null
+            "keyring_name": null,
+            "_active_windows_comment": "Optional per-account time windows restricting when the game may launch/run. Omit or leave empty for no restriction. Each window: {start, end, days?}. 'days' is optional (omit = every day; values: mon tue wed thu fri sat sun). Cross-midnight: set end < start (e.g. 22:00->02:00 runs that day 22:00 through 02:00 the next day). Inside a window: normal auto-launch/auto-close applies. Outside a window: game is never launched and closed immediately if running. At window end: game is closed unconditionally; a Pushover notification is sent if ready subs remain unprocessed (ENABLE_PUSHOVER=true). Combine with force247uptime=true to run 24/7 ONLY during the configured windows.",
+            "active_windows": [
+                {"start": "07:00", "end": "09:00", "days": ["mon", "tue", "wed", "thu", "fri"]},
+                {"start": "18:00", "end": "23:30"},
+                {"start": "22:00", "end": "02:00", "days": ["fri", "sat"]}
+            ]
         },
         {
             "enabled": false,

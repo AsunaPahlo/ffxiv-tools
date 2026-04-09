@@ -98,6 +98,7 @@ SUBS_COUNT_WIDTH = 11   # Display column width for submarine count (e.g., "Subs:
 HOURS_WIDTH = 24        # Display column width for submarine return times/ready status
 STATUS_WIDTH = 10       # Display column width for game status (Running/Closed/Up 24/7)
 PID_WIDTH = 11          # Display column width for process ID (e.g., "PID: 12345")
+WINDOW_WIDTH = 16       # Display column width for "(In Window)" / "(Out of Window)" label
 
 # Timer settings
 TIMER_REFRESH_INTERVAL = 30     # Main loop cycle time (seconds) - updates submarine timers and checks for launch/close conditions
@@ -297,11 +298,163 @@ def get_submarine_plan_name(sub_data):
     return submarine_plan_names.get(plan_guid, "")
 
 # ===============================================
+# Active Window Functions
+# ===============================================
+# NOTE: This section must stay ABOVE `def acc()` and the module-level
+# `account_locations = [acc(...)]` assignment. `acc()` calls
+# `parse_window_config(...)` at module import time, so the name must
+# already be bound. Moving this section below `acc()` will break module
+# loading with a NameError.
+#
+# Day-of-week names used throughout the window helpers.
+# Index matches datetime.weekday(): Monday=0 .. Sunday=6
+_WEEKDAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_VALID_DAYS = frozenset(_WEEKDAY_NAMES)
+
+def _parse_hhmm(s):
+    """Parse 'HH:MM' (24-hour) into a datetime.time. Raises ValueError on bad input."""
+    if not isinstance(s, str):
+        raise ValueError(f"time must be a string in 'HH:MM' format, got {type(s).__name__}")
+    parts = s.strip().split(":")
+    if len(parts) != 2:
+        raise ValueError(f"time must be 'HH:MM' format, got '{s}'")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError:
+        raise ValueError(f"time must be 'HH:MM' with numeric hour/minute, got '{s}'")
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"time out of range (HH 0-23, MM 0-59), got '{s}'")
+    return datetime.time(hour=hour, minute=minute)
+
+def parse_window_config(raw_windows, nickname):
+    """
+    Normalize a raw active_windows list from config into a list of dicts:
+        [{"start": datetime.time, "end": datetime.time, "days": frozenset[str] | None}, ...]
+    Returns None if raw_windows is None or empty (no window restriction).
+    Raises ValueError with account/index context on malformed input.
+    """
+    if raw_windows is None:
+        return None
+    if not isinstance(raw_windows, list):
+        raise ValueError(
+            f"Account '{nickname}': active_windows must be a list, got {type(raw_windows).__name__}"
+        )
+    if len(raw_windows) == 0:
+        return None
+
+    normalized = []
+    for i, entry in enumerate(raw_windows):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"Account '{nickname}': active_windows[{i}] must be an object, got {type(entry).__name__}"
+            )
+        if "start" not in entry:
+            raise ValueError(f"Account '{nickname}': active_windows[{i}] missing 'start'")
+        if "end" not in entry:
+            raise ValueError(f"Account '{nickname}': active_windows[{i}] missing 'end'")
+
+        try:
+            start_time = _parse_hhmm(entry["start"])
+        except ValueError as e:
+            raise ValueError(f"Account '{nickname}': active_windows[{i}] start: {e}")
+        try:
+            end_time = _parse_hhmm(entry["end"])
+        except ValueError as e:
+            raise ValueError(f"Account '{nickname}': active_windows[{i}] end: {e}")
+
+        if start_time == end_time:
+            raise ValueError(
+                f"Account '{nickname}': active_windows[{i}] start and end are equal "
+                f"('{entry['start']}') - zero-length window"
+            )
+
+        raw_days = entry.get("days", None)
+        if raw_days is None:
+            days = None
+        else:
+            if not isinstance(raw_days, list):
+                raise ValueError(
+                    f"Account '{nickname}': active_windows[{i}] days must be a list, "
+                    f"got {type(raw_days).__name__}"
+                )
+            lowered = set()
+            for d in raw_days:
+                if not isinstance(d, str):
+                    raise ValueError(
+                        f"Account '{nickname}': active_windows[{i}] days contains non-string value"
+                    )
+                dl = d.strip().lower()
+                if dl not in _VALID_DAYS:
+                    raise ValueError(
+                        f"Account '{nickname}': active_windows[{i}] has invalid day '{d}'. "
+                        f"Valid days: mon, tue, wed, thu, fri, sat, sun"
+                    )
+                lowered.add(dl)
+            if not lowered:
+                raise ValueError(
+                    f"Account '{nickname}': active_windows[{i}] days is empty - "
+                    f"omit the field to mean 'every day'"
+                )
+            days = frozenset(lowered)
+
+        normalized.append({"start": start_time, "end": end_time, "days": days})
+    return normalized
+
+def window_gate_enabled(account_entry):
+    """Return True if this account has any active windows configured."""
+    return bool(account_entry.get("active_windows"))
+
+def is_account_in_window(account_entry, now):
+    """
+    Return True if `now` (datetime.datetime) falls inside any configured active window
+    for the account. Returns True if no windows are configured (no restriction).
+    """
+    windows = account_entry.get("active_windows")
+    if not windows:
+        return True
+
+    now_time = now.time()
+    today_idx = now.weekday()
+    today_name = _WEEKDAY_NAMES[today_idx]
+    yesterday_name = _WEEKDAY_NAMES[(today_idx - 1) % 7]
+
+    for w in windows:
+        start = w["start"]
+        end = w["end"]
+        days = w["days"]  # frozenset or None
+        # parse_window_config rejects start == end, so end <= start means end < start
+        crosses_midnight = end <= start
+
+        # Check if a window starting today contains now
+        if days is None or today_name in days:
+            if not crosses_midnight:
+                if start <= now_time < end:
+                    return True
+            else:
+                # Cross-midnight window starting today: match the "head" segment
+                if now_time >= start:
+                    return True
+
+        # Check if a cross-midnight window that started yesterday contains now
+        if crosses_midnight and (days is None or yesterday_name in days):
+            if now_time < end:
+                return True
+
+    return False
+
+def format_window_status(account_entry, now):
+    """Return '(In Window)' / '(Out of Window)' if windows configured, else ''."""
+    if not window_gate_enabled(account_entry):
+        return ""
+    return "(In Window)" if is_account_in_window(account_entry, now) else "(Out of Window)"
+
+# ===============================================
 # Account locations
 # ===============================================
 user = getpass.getuser()
 
-def acc(nickname, pluginconfigs_path, include_submarines=True, force247uptime=False, enable_2fa=False, keyring_name=None):
+def acc(nickname, pluginconfigs_path, include_submarines=True, force247uptime=False, enable_2fa=False, keyring_name=None, active_windows=None):
     auto_path = os.path.join(pluginconfigs_path, "AutoRetainer", "DefaultConfig.json")
     return {
         "nickname": nickname,
@@ -310,6 +463,7 @@ def acc(nickname, pluginconfigs_path, include_submarines=True, force247uptime=Fa
         "force247uptime": bool(force247uptime),
         "enable_2fa": bool(enable_2fa),
         "keyring_name": keyring_name,
+        "active_windows": parse_window_config(active_windows, nickname),
     }
 
 # In the splatoon script: Rename($"{Environment.ProcessId} - nickname"
@@ -335,7 +489,7 @@ GAME_LAUNCHERS = {
 # ===============================================
 def load_external_config():
     """Load external config file if it exists and override settings."""
-    global VERSION_SUFFIX, NICKNAME_WIDTH, SUBS_COUNT_WIDTH, HOURS_WIDTH, STATUS_WIDTH, PID_WIDTH
+    global VERSION_SUFFIX, NICKNAME_WIDTH, SUBS_COUNT_WIDTH, HOURS_WIDTH, STATUS_WIDTH, PID_WIDTH, WINDOW_WIDTH
     global TIMER_REFRESH_INTERVAL, WINDOW_REFRESH_INTERVAL
     global ENABLE_AUTO_CLOSE, AUTO_CLOSE_THRESHOLD, MAX_RUNTIME, FORCE_CRASH_INACTIVITY_MINUTES, FORCE_CRASH_RETAINER_MINUTES
     global ENABLE_AUTO_LAUNCH, OTP_LAUNCH_DELAY, AUTO_LAUNCH_THRESHOLD, OPEN_DELAY_THRESHOLD
@@ -378,6 +532,7 @@ def load_external_config():
     HOURS_WIDTH = cfg("HOURS_WIDTH", HOURS_WIDTH)
     STATUS_WIDTH = cfg("STATUS_WIDTH", STATUS_WIDTH)
     PID_WIDTH = cfg("PID_WIDTH", PID_WIDTH)
+    WINDOW_WIDTH = cfg("WINDOW_WIDTH", WINDOW_WIDTH)
     TIMER_REFRESH_INTERVAL = cfg("TIMER_REFRESH_INTERVAL", TIMER_REFRESH_INTERVAL)
     WINDOW_REFRESH_INTERVAL = cfg("WINDOW_REFRESH_INTERVAL", WINDOW_REFRESH_INTERVAL)
     ENABLE_AUTO_CLOSE = cfg("ENABLE_AUTO_CLOSE", ENABLE_AUTO_CLOSE)
@@ -469,14 +624,21 @@ def load_external_config():
             pluginconfigs_path = acc_config.get("pluginconfigs_path", "")
             pluginconfigs_path = os.path.expandvars(pluginconfigs_path)
             pluginconfigs_path = pluginconfigs_path.replace("{user}", user)
-            new_locations.append(acc(
-                nickname=nickname,
-                pluginconfigs_path=pluginconfigs_path,
-                include_submarines=acc_config.get("include_submarines", True),
-                force247uptime=acc_config.get("force247uptime", False),
-                enable_2fa=acc_config.get("enable_2fa", False),
-                keyring_name=acc_config.get("keyring_name", None)
-            ))
+            try:
+                new_locations.append(acc(
+                    nickname=nickname,
+                    pluginconfigs_path=pluginconfigs_path,
+                    include_submarines=acc_config.get("include_submarines", True),
+                    force247uptime=acc_config.get("force247uptime", False),
+                    enable_2fa=acc_config.get("enable_2fa", False),
+                    keyring_name=acc_config.get("keyring_name", None),
+                    active_windows=acc_config.get("active_windows", None)
+                ))
+            except ValueError as e:
+                print(f"[CONFIG] {e}")
+                print("[CONFIG] Please fix the error in config.json and try again.")
+                input("\nPress Enter to exit...")
+                sys.exit(1)
         account_locations = new_locations
 
     # Override game_launchers if present
@@ -3045,7 +3207,12 @@ def display_submarine_timers(game_status_dict=None, client_start_times=None, lau
         vessel_waiting_state = vessel_waiting_states.get(nickname, {})
         vessel_waiting_active = bool(vessel_waiting_state.get("active"))
         soonest_retainer_hours = data.get("soonest_retainer_hours")
-        
+
+        # Look up the full account entry for window status + force247 flag
+        account_entry = next((a for a in account_locations if a["nickname"] == nickname), None)
+        window_str = format_window_status(account_entry, datetime.datetime.now()) if account_entry else ""
+        window_formatted = f"{window_str:{WINDOW_WIDTH}s}" if window_str else ""
+
         if not data["include_submarines"]:
             # Show game status even with submarines disabled (for force247uptime monitoring)
             subs_disabled_str = "Disabled"
@@ -3053,11 +3220,11 @@ def display_submarine_timers(game_status_dict=None, client_start_times=None, lau
             # Check if account has launcher failures
             if nickname in launcher_failed_accounts:
                 status_str = f"{'[LAUNCHER]':{STATUS_WIDTH}s}"
-                print(f"{nickname:{NICKNAME_WIDTH}s} {subs_disabled_str:{SUBS_COUNT_WIDTH}s}:{'':{HOURS_WIDTH+1}s}{status_str}")
+                print(f"{nickname:{NICKNAME_WIDTH}s} {subs_disabled_str:{SUBS_COUNT_WIDTH}s}:{'':{HOURS_WIDTH+1}s}{status_str}{window_formatted}")
                 continue
             
             # Get game status and force247uptime flag
-            force247 = account_locations[[i for i, acc in enumerate(account_locations) if acc["nickname"] == nickname][0]].get("force247uptime", False)
+            force247 = account_entry.get("force247uptime", False) if account_entry else False
             game_info = game_status_dict.get(nickname, (None, None))
             is_running = game_info[0]
             process_id = game_info[1]
@@ -3118,24 +3285,24 @@ def display_submarine_timers(game_status_dict=None, client_start_times=None, lau
                         status_str = f"{'[Closed]':{STATUS_WIDTH}s}"
             
             # Use same formatting structure as other entries for proper alignment
-            print(f"{nickname:{NICKNAME_WIDTH}s} {subs_disabled_str:{SUBS_COUNT_WIDTH}s}:{'':{HOURS_WIDTH+1}s}{status_str}{pid_uptime_str}")
+            print(f"{nickname:{NICKNAME_WIDTH}s} {subs_disabled_str:{SUBS_COUNT_WIDTH}s}:{'':{HOURS_WIDTH+1}s}{status_str}{pid_uptime_str}{window_formatted}")
         elif total_subs == 0:
             no_subs_str = "No submarines found"
-            print(f"{nickname:{NICKNAME_WIDTH}s} {no_subs_str:{SUBS_COUNT_WIDTH}s}  {'':{HOURS_WIDTH}s}")
+            print(f"{nickname:{NICKNAME_WIDTH}s} {no_subs_str:{SUBS_COUNT_WIDTH}s}  {'':{HOURS_WIDTH}s}{window_formatted}")
         else:
             # Check if account has launcher failures
             if nickname in launcher_failed_accounts:
                 # Get force247uptime flag for retainer display
-                force247 = account_locations[[i for i, acc in enumerate(account_locations) if acc["nickname"] == nickname][0]].get("force247uptime", False)
+                force247 = account_entry.get("force247uptime", False) if account_entry else False
                 hours_str = format_hours(soonest_hours, ready_subs, is_running=False, force247uptime=force247, ready_retainers=ready_retainers, soonest_retainer_hours=soonest_retainer_hours)
                 subs_str = f"({total_subs} subs)"
                 status_str = f"{'[LAUNCHER]':{STATUS_WIDTH}s}"
-                print(f"{nickname:{NICKNAME_WIDTH}s} {subs_str:{SUBS_COUNT_WIDTH}s}: {hours_str:{HOURS_WIDTH}s}{status_str}")
+                print(f"{nickname:{NICKNAME_WIDTH}s} {subs_str:{SUBS_COUNT_WIDTH}s}: {hours_str:{HOURS_WIDTH}s}{status_str}{window_formatted}")
                 continue
             
             # Get game status for this account (only show for enabled submarines)
             # Check force247uptime flag to determine status display
-            force247 = account_locations[[i for i, acc in enumerate(account_locations) if acc["nickname"] == nickname][0]].get("force247uptime", False)
+            force247 = account_entry.get("force247uptime", False) if account_entry else False
             game_info = game_status_dict.get(nickname, (None, None))
             is_running = game_info[0]
             process_id = game_info[1]
@@ -3215,7 +3382,7 @@ def display_submarine_timers(game_status_dict=None, client_start_times=None, lau
             
             hours_str = format_hours(soonest_hours, ready_subs, is_running=(is_running if is_running is not None else False), force247uptime=force247, ready_retainers=ready_retainers, soonest_retainer_hours=soonest_retainer_hours)
             subs_str = f"({total_subs} subs)"
-            print(f"{nickname:{NICKNAME_WIDTH}s} {subs_str:{SUBS_COUNT_WIDTH}s}: {hours_str:{HOURS_WIDTH}s}{status_str}{pid_uptime_str}")
+            print(f"{nickname:{NICKNAME_WIDTH}s} {subs_str:{SUBS_COUNT_WIDTH}s}: {hours_str:{HOURS_WIDTH}s}{status_str}{pid_uptime_str}{window_formatted}")
     
     print()
     print("=" * 85)
@@ -3330,7 +3497,18 @@ def main():
                 sys.exit(1)
             print("[INFO] Running in single client mode (USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME=True)")
             print("[INFO] Using default FFXIV window title detection\n")
-        
+
+        # Print startup summary for accounts with active_windows configured
+        for account_entry in account_locations:
+            if not window_gate_enabled(account_entry):
+                continue
+            nickname = account_entry["nickname"]
+            num_ranges = len(account_entry["active_windows"])
+            if account_entry.get("force247uptime", False):
+                print(f"[WINDOW] {nickname}: active windows + force247uptime ({num_ranges} range(s), will run full window only)")
+            else:
+                print(f"[WINDOW] {nickname}: active windows configured ({num_ranges} range(s))")
+
         # Track last window check time (set to negative to force immediate check on first run)
         last_window_check = -WINDOW_REFRESH_INTERVAL
         game_status_dict = {}
@@ -3506,7 +3684,14 @@ def main():
                             if DEBUG:
                                 print(f"[DEBUG] {nickname}: Launcher failed, skipping")
                             continue
-                        
+
+                        # Window gate: if active_windows are configured, skip launch when outside window
+                        if window_gate_enabled(account_entry):
+                            if not is_account_in_window(account_entry, datetime.datetime.now()):
+                                if DEBUG:
+                                    print(f"[DEBUG] {nickname}: Outside active window, skipping launch")
+                                continue
+
                         # Skip if submarines are disabled for this account and not force247uptime
                         if not include_subs and not rotating_retainers:
                             if DEBUG:
@@ -3722,6 +3907,53 @@ def main():
                             display_submarine_timers(game_status_dict, client_start_times, launcher_failed_accounts, last_sub_processed, retainer_mode_active, vessel_waiting_states)
                             print("")  # Empty line for spacing
             
+            # Window enforcement: close any running account that is outside its active window.
+            # Runs independently of ENABLE_AUTO_CLOSE - opting into a window implies enforcement.
+            for account_entry in account_locations:
+                nickname = account_entry["nickname"]
+                if not window_gate_enabled(account_entry):
+                    continue
+                if is_account_in_window(account_entry, datetime.datetime.now()):
+                    continue
+
+                game_info = game_status_dict.get(nickname, (None, None))
+                is_running = game_info[0]
+                process_id = game_info[1]
+                if not is_running:
+                    continue
+                if not USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME and not process_id:
+                    continue
+                if process_id and process_id in closed_pids:
+                    continue
+
+                include_subs = account_entry.get("include_submarines", True)
+                ready_subs = 0
+                if include_subs:
+                    timer_data = get_submarine_timers_for_account(account_entry)
+                    ready_subs = timer_data.get("ready_subs", 0) or 0
+
+                print(f"\n[WINDOW] Closing {nickname} (PID: {process_id}) - active window ended")
+
+                kill_success = kill_game_client_and_cleanup(
+                    nickname, process_id,
+                    f"[WINDOW] Successfully closed {nickname} at window end.",
+                    f"[WINDOW] Failed to close {nickname}",
+                    closed_pids, game_status_dict, client_start_times,
+                    last_launch_time=last_launch_time,
+                    game_launch_timestamp=game_launch_timestamp,
+                    last_sub_processed=last_sub_processed,
+                    retainer_mode_active=retainer_mode_active,
+                )
+
+                if kill_success:
+                    if ready_subs > 0:
+                        log_error(
+                            f"WINDOW_EXPIRED_WITH_READY_SUBS: {nickname} - "
+                            f"active window ended with {ready_subs} ready sub(s) unprocessed"
+                        )
+                    else:
+                        print(f"[WINDOW] {nickname} closed cleanly (no ready subs)")
+
             # Auto-close games if enabled and conditions are met
             if ENABLE_AUTO_CLOSE:
                 for account_entry in account_locations:
