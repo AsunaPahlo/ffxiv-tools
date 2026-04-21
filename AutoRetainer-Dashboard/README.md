@@ -1,4 +1,4 @@
-# AutoRetainer Dashboard v1.31
+# AutoRetainer Dashboard v1.34
 
 A self-hosted web dashboard that displays FFXIV character data from AutoRetainer, XA Database, and Lifestream configs. Provides a modern, dark-themed UI accessible via browser showing characters, submarines, retainers, housing locations, marketboard items, gil totals, inventory tracking, MSQ progression (disabled), job levels, currencies, income/cost calculations, comprehensive supply tracking, an FC Data page with Plot Map & FC Capacity Planner, and a Data Master List page for managing all submarines across all accounts with Excel export.
 
@@ -35,7 +35,7 @@ A self-hosted web dashboard that displays FFXIV character data from AutoRetainer
 - **Currency Tracking**: Categorized currency display (Crystals, Common, Tomestones, Battle, Societies)
 - **Player Name Copy**: Easy copy/paste of Name@World format
 - **Sorting**: Sort characters by level, gil, treasure, FC points, ventures, inventory, MSQ%, retainer/submarine levels
-- **Filtering**: Filter characters by retainers, submarines, personal house, or FC house
+- **Filtering**: Filter characters by retainers, submarines, personal house, FC house, or FC chest gil
 - **Hide Money Stats**: Privatize earnings for screenshots (replaces financial data with *****)
 - **Anonymize**: Hides personal data for screenshots (names, worlds, FCs, housing addresses show TOP SECRET)
 - **Expand All / Collapse All**: Expand or collapse all character cards
@@ -45,18 +45,19 @@ A self-hosted web dashboard that displays FFXIV character data from AutoRetainer
 - **Auto-Refresh**: Configurable auto-refresh interval (default: 60 seconds)
 - **Modern UI**: Dark-themed responsive design with collapsible sections
 - **Ready Status Indicators**: Visual highlighting when retainers/submarines are ready
-- **FC Data Page** (`/fcdata/`): Visual housing plot overview with district grid, bar chart views, FC Capacity Planner, Sub Planners, and a privacy toggle to censor player names for screenshots
+- **FC Data Page** (`/fcdata/`): Visual housing plot overview with district grid, bar chart views, searchable multi-world filtering with clear-selected reset, FC Capacity Planner, Sub Planners, and a privacy toggle to censor player names for screenshots
+- **Housing Size Resolution**: FC Data plot sizes now prefer XA snapshot housing strings, reuse known XA sizes across matching district/plot entries, and fall back to the same plot-size resolution used by XA Slave Export Data when needed
 - **FC Capacity Planner**: Account/region selector showing FC membership, character limits (NA/EU/JP=40, OCE=39), per-world breakdowns (8 max), and earning potential calculations
 - **Sub Planners**: Per-account submarine overview with Name@World display, ETA countdown, compact `🚢`/inventory stats, and bidirectional sorting by submarine count, level, tanks, kits, restock days, and inventory
 - **Characters Not in FC Table**: List of all characters without FC membership, with level and housing status (hidden by default, toggle to show)
-- **Data Master List** (`/data/`): Full-viewport sortable table of all submarines across all accounts
+- **Data Master List** (`/data/`): Full-viewport sortable table of all submarines across all accounts, including character gil, retainer gil, FC gil, and treasure ahead of the supply columns
 - **Excel Export**: Export visible/filtered table rows to Excel with headers, auto-filters, frozen header row, and auto-fit column widths
 - **Sticky UI Elements**: Filter bar and table column headers remain visible when scrolling on Data page
 - **Sub Filtering**: "Show only toons with subs" (default on), "Show unused toons" toggle for characters with no FC/subs/tanks/kits
 - **FC Points Summary**: Total FC points across all FCs (deduplicated), convertible tanks count, and total tank gil value
 - **Unique FC Count**: Summary card showing count of distinct Free Companies across all accounts
-- **Financial Charts** (`/charts/`): Historical timeline charts powered by xa.db from XA Database plugin
-- **Charts Include**: Daily gil earnings vs supply costs, net profit, submarine fleet composition, supply inventory, consumption rates, days until restocking
+- **Financial Charts** (`/charts/`): Historical timeline charts powered by xa.db from XA Database plugin, including FC chest gil from master-owned XA snapshots when available
+- **Charts Include**: Total wealth history with character gil, retainer gil, FC chest gil, and treasure value; daily gil earnings vs supply costs, net profit line/area history, submarine fleet trends, supply inventory, consumption rates, days until restocking, and dual-axis charts that hide unused secondary axes when legend series are toggled off
 - **Cross-Page Navigation**: Dashboard, FC Data, Data, and Charts links accessible from every page
 
 </details>
@@ -71,7 +72,7 @@ A self-hosted web dashboard that displays FFXIV character data from AutoRetainer
 
 #### Summary Cards
 
-- Total Gil across all accounts
+- Total Gil across all accounts (character gil + retainer gil + FC chest gil)
 - Treasure Value (from XA Database)
 - Coffer + Dyes estimated value
 - Gil + Treasure combined total
@@ -89,7 +90,7 @@ A self-hosted web dashboard that displays FFXIV character data from AutoRetainer
 - MSQ progress percentage with quest count and current quest name
 - Player Name@World (for easy copy/paste)
 - Personal House and FC House locations (from Lifestream)
-- Character gil + Retainer gil
+- Character gil + Retainer gil + FC gil
 - Treasure value (salvaged rings, bracelets, etc.)
 - Coffer + Dye estimated value
 - FC Points, Venture Coins, and Coffer count
@@ -492,7 +493,7 @@ This dashboard is not officially associated with or endorsed by the AutoRetainer
 
 ## License
 
-`AGPL-3.0-or-later`
+[AGPL-3.0-or-later](LICENSE)
 
 Created by: https://github.com/xa-io
 
@@ -501,6 +502,26 @@ Created by: https://github.com/xa-io
 <details>
 
 <summary>Version History</summary>
+
+### v1.34 (2026-04-11) - FC Chest Gil Dashboard Expansion
+
+- **FC Chest Gil Totals**: Main-page character, account, and summary gil totals now include master-owned FC chest gil from XA Database snapshots
+- **Dashboard Visibility**: Added an `FC Gil` player-stats row and a `🧰` main-page filter for characters with saved FC chest gil
+- **Data Page Layout**: `/data/` now adds `Ret. Gil` and `FC Gil` columns, with `Treasure` moved ahead of the supply columns
+- **Charts Upgrade**: `/charts/` now stores FC chest gil in daily history, adds an `FC Chest Gil` summary card, expands Total Wealth, and uses dual-axis handling for mixed-scale charts
+- **Chart Styling**: Net Profit Per Day now uses the same line/area style as the rest of the financial charts
+
+### v1.33 (2026-03-26) - Multi-World Housing Plot Filter
+
+- **Multi-World Selection**: Housing Plot Overview world filter now supports selecting multiple worlds at the same time on `/fcdata/`
+- **Clear Selected**: Added a one-click clear action that resets the world filter back to showing all worlds
+- **Filter Compatibility**: Multi-world selection continues to combine with the existing region, account, and size filters
+
+### v1.32 (2026-03-26) - FC Data Housing Filters
+
+- **World Filter**: Added a searchable Housing Plot Overview world dropdown showing world, data center, and region
+- **Size Filters**: Added Small / Medium / Large housing size filters after the account filters on `/fcdata/`
+- **XA Housing Merge**: Housing Plot Overview now merges XA Database housing snapshot size data into the Lifestream-based plot map when locations match
 
 ### v1.31 (2026-03-17) - Submarine Unlock Counters
 

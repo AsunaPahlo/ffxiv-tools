@@ -25,20 +25,20 @@
 # • Retainer details with venture status, levels, and marketboard items
 # • Housing display showing Personal House and FC House locations
 # • Sorting by level, gil, treasure, FC points, ventures, inventory, MSQ%, retainer/sub levels
-# • Filtering by retainers, submarines, personal house, and FC house
+# • Filtering by retainers, submarines, personal house, FC house, and FC chest gil
 # • Anonymize mode for screenshots (hides names, addresses with TOP SECRET)
 # • Configurable display options (SHOW_CLASSES, SHOW_CURRENCIES)
 # • Monthly income and daily repair cost calculations
 # • Modern, responsive dark-themed UI with multi-account support
 #
-# Landing Page v1.31
+# Landing Page v1.35
 # AutoRetainer Dashboard
 # Created by: https://github.com/xa-io
-# Last Updated: 2026-03-08 22:00:00
+# Last Updated: 2026-04-11 20:00:00
 #
 # ## Release Notes This Update ##
 #
-# v1.31 - Added unlocked counters to FC Data page in mass Sub Planners list
+# v1.35 - Added adjustable column options for the /fcdata/ submarine mass listing
 #
 ############################################################################################################################
 
@@ -51,6 +51,7 @@ import os
 import datetime
 import getpass
 import sqlite3
+import re
 from pathlib import Path
 from flask import Flask, render_template_string, jsonify
 
@@ -63,7 +64,7 @@ DEBUG = False           # Flask debug mode (set True for development)
 AUTO_REFRESH = 60       # Auto-refresh interval in seconds (0 to disable)
 
 # Display options
-VERSION = "v1.31"       # Version number shown in footer and startup
+VERSION = "v1.35"       # Version number shown in footer and startup
 SHOW_CLASSES = False     # Show DoW/DoM and DoH/DoL job sections, disable to speed up page load
 SHOW_CURRENCIES = False  # Show currencies section, disable to speed up page load
 SHOW_MSQ_PROGRESSION = True  # Show MSQ progression tracking
@@ -295,34 +296,85 @@ COFFER_DYE_IDS = set(COFFER_DYE_VALUES.keys())
 # ===============================================
 # World Region Mappings (for region filtering)
 # ===============================================
-NA_WORLDS = {
-    "adamantoise","cactuar","faerie","gilgamesh","jenova","midgardsormr","sargatanas","siren",
-    "balmung","brynhildr","coeurl","diabolos","goblin","malboro","mateus","zalera",
-    "behemoth","excalibur","exodus","famfrit","hyperion","lamia","leviathan","ultros",
-    "cuchulainn","golem","halicarnassus","kraken","maduin","marilith","rafflesia","seraph"
+WORLD_REGION_DC_GROUPS = {
+    "NA": {
+        "Aether": ["Adamantoise", "Cactuar", "Faerie", "Gilgamesh", "Jenova", "Midgardsormr", "Sargatanas", "Siren"],
+        "Crystal": ["Balmung", "Brynhildr", "Coeurl", "Diabolos", "Goblin", "Malboro", "Mateus", "Zalera"],
+        "Dynamis": ["Cuchulainn", "Golem", "Halicarnassus", "Kraken", "Maduin", "Marilith", "Rafflesia", "Seraph"],
+        "Primal": ["Behemoth", "Excalibur", "Exodus", "Famfrit", "Hyperion", "Lamia", "Leviathan", "Ultros"],
+    },
+    "EU": {
+        "Chaos": ["Cerberus", "Louisoix", "Moogle", "Omega", "Phantom", "Ragnarok", "Sagittarius", "Spriggan"],
+        "Light": ["Alpha", "Lich", "Odin", "Phoenix", "Raiden", "Shiva", "Twintania", "Zodiark"],
+    },
+    "JP": {
+        "Elemental": ["Aegis", "Atomos", "Carbuncle", "Garuda", "Gungnir", "Kujata", "Tonberry", "Typhon"],
+        "Gaia": ["Alexander", "Bahamut", "Durandal", "Fenrir", "Ifrit", "Ridill", "Tiamat", "Ultima"],
+        "Mana": ["Anima", "Asura", "Chocobo", "Hades", "Ixion", "Masamune", "Pandaemonium", "Titan"],
+        "Meteor": ["Belias", "Mandragora", "Ramuh", "Shinryu", "Unicorn", "Valefor", "Yojimbo", "Zeromus"],
+    },
+    "OCE": {
+        "Materia": ["Bismarck", "Ravana", "Sephirot", "Sophia", "Zurvan"],
+    },
 }
-EU_WORLDS = {
-    "cerberus","louisoix","moogle","omega","phantom","ragnarok","sagittarius","spriggan",
-    "alpha","lich","odin","phoenix","raiden","shiva","twintania","zodiark"
+REGION_ORDER = ["NA", "EU", "JP", "OCE"]
+DATA_CENTER_ORDER = {
+    "NA": ["Aether", "Crystal", "Dynamis", "Primal"],
+    "EU": ["Chaos", "Light"],
+    "JP": ["Elemental", "Gaia", "Mana", "Meteor"],
+    "OCE": ["Materia"],
 }
-OCE_WORLDS = {"bismarck","ravana","sephirot","sophia","zurvan"}
-JP_WORLDS = {
-    "aegis","atomos","carbuncle","garuda","gungnir","kujata","tonberry","typhon",
-    "alexander","bahamut","durandal","fenrir","ifrit","ridill","tiamat","ultima",
-    "anima","asura","chocobo","hades","ixion","masamune","pandaemonium","titan",
-    "belias","mandragora","ramuh","shinryu","unicorn","valefor","yojimbo","zeromus"
+REGION_SORT_INDEX = {region: index for index, region in enumerate(REGION_ORDER)}
+DATA_CENTER_SORT_INDEX = {
+    region: {dc: index for index, dc in enumerate(order)}
+    for region, order in DATA_CENTER_ORDER.items()
 }
+WORLD_METADATA = {}
+REGION_WORLD_ORDER = {region: [] for region in REGION_ORDER}
+for region_code, dc_worlds in WORLD_REGION_DC_GROUPS.items():
+    for data_center_name, world_names in dc_worlds.items():
+        for world_name in world_names:
+            WORLD_METADATA[world_name.lower()] = {
+                "name": world_name,
+                "data_center": data_center_name,
+                "region": region_code,
+            }
+            REGION_WORLD_ORDER[region_code].append(world_name)
+
+NA_WORLDS = {world.lower() for world in REGION_WORLD_ORDER["NA"]}
+EU_WORLDS = {world.lower() for world in REGION_WORLD_ORDER["EU"]}
+OCE_WORLDS = {world.lower() for world in REGION_WORLD_ORDER["OCE"]}
+JP_WORLDS = {world.lower() for world in REGION_WORLD_ORDER["JP"]}
+PLOT_WORLD_OPTIONS = sorted(
+    (
+        {
+            "name": info["name"],
+            "data_center": info["data_center"],
+            "region": info["region"],
+            "label": f"{info['name']} | {info['data_center']} | {info['region']}",
+            "search_text": f"{info['name']} {info['data_center']} {info['region']}".lower(),
+        }
+        for info in WORLD_METADATA.values()
+    ),
+    key=lambda info: (
+        REGION_SORT_INDEX.get(info["region"], 99),
+        DATA_CENTER_SORT_INDEX.get(info["region"], {}).get(info["data_center"], 99),
+        info["name"],
+    )
+)
+
+def get_world_info(world: str) -> dict:
+    if not world:
+        return {}
+    return WORLD_METADATA.get(str(world).strip().lower(), {})
 
 def region_from_world(world: str) -> str:
-    """Return region code (NA/EU/OCE/JP) for a given world name."""
-    if not world:
-        return ""
-    w = str(world).strip().lower()
-    if w in NA_WORLDS: return "NA"
-    if w in EU_WORLDS: return "EU"
-    if w in OCE_WORLDS: return "OCE"
-    if w in JP_WORLDS: return "JP"
-    return ""
+    info = get_world_info(world)
+    return info.get("region", "")
+
+def datacenter_from_world(world: str) -> str:
+    info = get_world_info(world)
+    return info.get("data_center", "")
 
 # ===============================================
 # Job Class Abbreviations (for character class display)
@@ -600,11 +652,114 @@ RESIDENTIAL_DISTRICTS = {
 
 DISTRICT_ABBREV = {
     "Mist": "Mist",
+    "The Mist": "Mist",
     "Goblet": "Goblet",
+    "The Goblet": "Goblet",
     "Lavender Beds": "LB",
+    "The Lavender Beds": "LB",
     "Empyreum": "Empyreum",
     "Shirogane": "Shirogane"
 }
+
+HOUSING_OWNER_SUFFIX_REGEX = re.compile(r"\s*\[[^\]]+\]\s*$")
+HOUSING_SIZE_REGEX = re.compile(r"\((Small|Medium|Large)\)\s*(?:\[[^\]]+\])?\s*$", re.IGNORECASE)
+HOUSING_PLOT_REGEX = re.compile(r"\bPlot\s+(?P<plot>\d+)\b", re.IGNORECASE)
+HOUSING_WARD_REGEX = re.compile(r"\b(?:Ward\s+(?P<ward_after>\d+)|(?P<ward_before>\d+)(?:st|nd|rd|th)\s+Ward)\b", re.IGNORECASE)
+HOUSING_PAREN_REGEX = re.compile(r"\s*\([^)]*\)")
+
+def strip_housing_owner_suffix(value):
+    return HOUSING_OWNER_SUFFIX_REGEX.sub("", str(value or "").strip()).strip()
+
+def extract_housing_plot_size(value):
+    normalized = strip_housing_owner_suffix(value)
+    if not normalized:
+        return ""
+    match = HOUSING_SIZE_REGEX.search(normalized)
+    return match.group(1).title() if match else ""
+
+def parse_xa_housing_location(value):
+    normalized = strip_housing_owner_suffix(value)
+    if not normalized:
+        return None
+    plot_match = HOUSING_PLOT_REGEX.search(normalized)
+    ward_match = HOUSING_WARD_REGEX.search(normalized)
+    if not plot_match or not ward_match:
+        return None
+    ward_value = ward_match.group("ward_after") or ward_match.group("ward_before")
+    if not ward_value:
+        return None
+    segments = [segment.strip() for segment in normalized.split(",") if segment.strip()]
+    if not segments:
+        return None
+    district_name = HOUSING_PAREN_REGEX.sub("", segments[-1]).strip().rstrip(",")
+    return {
+        "ward": int(ward_value),
+        "plot": int(plot_match.group("plot")),
+        "district": DISTRICT_ABBREV.get(district_name, district_name),
+        "size": extract_housing_plot_size(normalized),
+    }
+
+def build_xa_housing_size_lookup(snapshot_map):
+    size_lookup = {}
+    for snapshot in snapshot_map.values():
+        for estate_key in ("personal_estate", "fc_estate"):
+            parsed = parse_xa_housing_location(snapshot.get(estate_key, ""))
+            if not parsed or not parsed.get("size"):
+                continue
+            size_lookup.setdefault((parsed["district"], parsed["plot"]), parsed["size"])
+    return size_lookup
+
+def fallback_housing_plot_size(plot_number):
+    if not plot_number or plot_number <= 0:
+        return ""
+    local_plot = (int(plot_number) - 1) % 30
+    if 0 <= local_plot <= 7:
+        return "Small"
+    if 8 <= local_plot <= 11:
+        return "Medium"
+    if 12 <= local_plot <= 14:
+        return "Large"
+    if 15 <= local_plot <= 22:
+        return "Small"
+    if 23 <= local_plot <= 26:
+        return "Medium"
+    if 27 <= local_plot <= 29:
+        return "Large"
+    return ""
+
+def merge_xa_housing_entry(current_entry, raw_value, size_lookup=None):
+    if not current_entry:
+        return current_entry
+    merged = dict(current_entry)
+    merged.setdefault("size", "")
+    parsed = parse_xa_housing_location(raw_value)
+    if parsed:
+        same_location = (
+            merged.get("ward") == parsed["ward"]
+            and merged.get("plot") == parsed["plot"]
+            and DISTRICT_ABBREV.get(merged.get("district", ""), merged.get("district", "")) == parsed["district"]
+        )
+        if same_location and parsed.get("size"):
+            merged["size"] = parsed["size"]
+    if not merged.get("size") and size_lookup:
+        fallback_key = (
+            DISTRICT_ABBREV.get(merged.get("district", ""), merged.get("district", "")),
+            merged.get("plot"),
+        )
+        fallback_size = size_lookup.get(fallback_key, "")
+        if fallback_size:
+            merged["size"] = fallback_size
+    if not merged.get("size"):
+        merged["size"] = fallback_housing_plot_size(merged.get("plot"))
+    return merged
+
+def apply_xa_housing_sizes(housing_entry, xa_entry, size_lookup=None):
+    if not housing_entry:
+        return housing_entry
+    return {
+        "private": merge_xa_housing_entry(housing_entry.get("private"), xa_entry.get("personal_estate", ""), size_lookup),
+        "fc": merge_xa_housing_entry(housing_entry.get("fc"), xa_entry.get("fc_estate", ""), size_lookup),
+    }
 
 
 def load_lifestream_data(lifestream_path):
@@ -643,9 +798,9 @@ def load_lifestream_data(lifestream_path):
                 is_private = entry.get('IsPrivate', False)
                 
                 if is_private:
-                    housing_map[cid]['private'] = {'ward': ward, 'plot': plot, 'district': district_abbrev}
+                    housing_map[cid]['private'] = {'ward': ward, 'plot': plot, 'district': district_abbrev, 'size': ''}
                 else:
-                    housing_map[cid]['fc'] = {'ward': ward, 'plot': plot, 'district': district_abbrev}
+                    housing_map[cid]['fc'] = {'ward': ward, 'plot': plot, 'district': district_abbrev, 'size': ''}
         
         return housing_map
     except Exception as e:
@@ -823,6 +978,7 @@ def init_sublord_db():
             timestamp TEXT,
             total_character_gil INTEGER DEFAULT 0,
             total_retainer_gil INTEGER DEFAULT 0,
+            total_fc_chest_gil INTEGER DEFAULT 0,
             total_treasure_value INTEGER DEFAULT 0,
             total_gil_plus_treasure INTEGER DEFAULT 0,
             total_subs INTEGER DEFAULT 0,
@@ -842,6 +998,9 @@ def init_sublord_db():
             total_gil_overall INTEGER DEFAULT 0,
             total_supply_cost_overall INTEGER DEFAULT 0
         )""")
+        snapshot_columns = {row[1] for row in c.execute("PRAGMA table_info(daily_snapshots)").fetchall()}
+        if "total_fc_chest_gil" not in snapshot_columns:
+            c.execute("ALTER TABLE daily_snapshots ADD COLUMN total_fc_chest_gil INTEGER DEFAULT 0")
         c.execute("INSERT OR IGNORE INTO cumulative_totals (id, total_gil_overall, total_supply_cost_overall) VALUES (1, 0, 0)")
         conn.commit()
         conn.close()
@@ -849,9 +1008,34 @@ def init_sublord_db():
         print(f"[SUBLORD-DB] Error initializing database: {e}")
 
 def _get_xa_gil_totals():
-    """Read character Gil and retainer Gil from all xa.db files."""
+    """Read character, retainer, and FC chest Gil from all xa.db files."""
+    def _read_fc_chest_gil(raw_value):
+        if not raw_value or raw_value == "null":
+            return 0
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            return 0
+        if isinstance(parsed, dict):
+            try:
+                return int(parsed.get("FcGil", 0) or 0)
+            except Exception:
+                return 0
+        if isinstance(parsed, list):
+            total = 0
+            for entry in parsed:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    total += int(entry.get("FcGil", 0) or 0)
+                except Exception:
+                    continue
+            return total
+        return 0
+
     total_char_gil = 0
     total_ret_gil = 0
+    total_fc_chest_gil = 0
     for account in account_locations:
         db_path = Path(account.get("xa_db_path", ""))
         if not db_path or not db_path.exists():
@@ -861,9 +1045,18 @@ def _get_xa_gil_totals():
             c = conn.cursor()
             tables = {row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
             if "xa_characters" in tables:
-                row = c.execute("SELECT COALESCE(SUM(gil), 0), COALESCE(SUM(retainer_gil), 0) FROM xa_characters").fetchone()
-                total_char_gil += row[0] or 0
-                total_ret_gil += row[1] or 0
+                xa_character_columns = {row[1] for row in c.execute("PRAGMA table_info(xa_characters)").fetchall()}
+                select_parts = [
+                    "COALESCE(gil, 0)",
+                    "COALESCE(retainer_gil, 0)",
+                    "free_company_json" if "free_company_json" in xa_character_columns else "NULL AS free_company_json",
+                ]
+                for char_gil, ret_gil, free_company_json in c.execute(
+                    f"SELECT {', '.join(select_parts)} FROM xa_characters"
+                ).fetchall():
+                    total_char_gil += char_gil or 0
+                    total_ret_gil += ret_gil or 0
+                    total_fc_chest_gil += _read_fc_chest_gil(free_company_json)
             else:
                 for row in c.execute("SELECT amount FROM currency_balances WHERE currency_name = 'Gil'").fetchall():
                     total_char_gil += row[0] or 0
@@ -872,7 +1065,7 @@ def _get_xa_gil_totals():
             conn.close()
         except Exception:
             pass
-    return total_char_gil, total_ret_gil
+    return total_char_gil, total_ret_gil, total_fc_chest_gil
 
 def write_daily_snapshot(summary):
     """
@@ -887,8 +1080,8 @@ def write_daily_snapshot(summary):
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Get character/retainer Gil split from xa.db files
-    char_gil, ret_gil = _get_xa_gil_totals()
+    # Get character/retainer/FC chest Gil split from xa.db files
+    char_gil, ret_gil, fc_chest_gil = _get_xa_gil_totals()
     treasure = summary.get("total_treasure", 0)
     
     # Check if this is a new day (for cumulative tracking)
@@ -903,15 +1096,17 @@ def write_daily_snapshot(summary):
         is_new_day = existing is None
         
         c.execute("""INSERT INTO daily_snapshots (date, timestamp, total_character_gil, total_retainer_gil,
+            total_fc_chest_gil,
             total_treasure_value, total_gil_plus_treasure, total_subs, total_subs_farming, total_subs_leveling,
             total_gil_per_day, total_supply_cost_per_day, total_net_per_day,
             ceruleum_tank_inventory, repair_kit_inventory, days_until_restocking,
             total_tanks_per_day, total_kits_per_day)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
             timestamp=excluded.timestamp,
             total_character_gil=excluded.total_character_gil,
             total_retainer_gil=excluded.total_retainer_gil,
+            total_fc_chest_gil=excluded.total_fc_chest_gil,
             total_treasure_value=excluded.total_treasure_value,
             total_gil_plus_treasure=excluded.total_gil_plus_treasure,
             total_subs=excluded.total_subs,
@@ -926,8 +1121,8 @@ def write_daily_snapshot(summary):
             total_tanks_per_day=excluded.total_tanks_per_day,
             total_kits_per_day=excluded.total_kits_per_day
         """, (
-            today, timestamp, char_gil, ret_gil,
-            treasure, char_gil + ret_gil + treasure,
+            today, timestamp, char_gil, ret_gil, fc_chest_gil,
+            treasure, char_gil + ret_gil + fc_chest_gil + treasure,
             summary.get("enabled_subs", 0),
             summary.get("subs_farming", 0),
             summary.get("subs_leveling", 0),
@@ -1268,7 +1463,7 @@ def scan_xa_db(db_path):
         "treasure_value": int, "coffer_dye_value": int, "coffer_count": int,
         "dye_count": int, "dye_pure_white": int, "dye_jet_black": int,
         "dye_pastel_pink": int, "mb_dye_count": int, "venture_coins": int,
-        "current_job": str, "current_level": int,
+        "current_job": str, "current_level": int, "fc_gil": int,
         "highest_job": str, "highest_level": int,
         "lowest_job": str, "lowest_level": int,
         "all_jobs": dict, "all_currencies": dict, "completed_quests": list,
@@ -1286,6 +1481,23 @@ def scan_xa_db(db_path):
         except Exception:
             return []
         return parsed if isinstance(parsed, list) else []
+
+    def _read_fc_gil(raw_value):
+        if not raw_value or raw_value == "null":
+            return 0
+        try:
+            parsed = json.loads(raw_value)
+        except Exception:
+            return 0
+        if isinstance(parsed, dict):
+            return _read_int(parsed, "FcGil", "fc_gil")
+        if isinstance(parsed, list):
+            total = 0
+            for entry in parsed:
+                if isinstance(entry, dict):
+                    total += _read_int(entry, "FcGil", "fc_gil")
+            return total
+        return 0
 
     def _read_int(entry, *keys):
         for key in keys:
@@ -1344,18 +1556,34 @@ def scan_xa_db(db_path):
         tables = {row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
 
         if "xa_characters" in tables:
-            rows = c.execute("SELECT content_id, currencies_json, jobs_json, items_json, listings_json, retainer_items_json, msq_milestones_json FROM xa_characters").fetchall()
+            xa_character_columns = {row[1] for row in c.execute("PRAGMA table_info(xa_characters)").fetchall()}
+            select_parts = [
+                "content_id",
+                "currencies_json",
+                "jobs_json",
+                "items_json",
+                "listings_json",
+                "retainer_items_json",
+                "msq_milestones_json",
+                "personal_estate" if "personal_estate" in xa_character_columns else "'' AS personal_estate",
+                "fc_estate" if "fc_estate" in xa_character_columns else "'' AS fc_estate",
+                "free_company_json" if "free_company_json" in xa_character_columns else "'null' AS free_company_json",
+            ]
+            rows = c.execute(f"SELECT {', '.join(select_parts)} FROM xa_characters").fetchall()
             for row in rows:
                 cid = row[0]
                 result[cid] = {
                     "treasure_value": 0, "coffer_dye_value": 0, "coffer_count": 0,
                     "dye_count": 0, "dye_pure_white": 0, "dye_jet_black": 0,
-                    "dye_pastel_pink": 0, "mb_dye_count": 0, "venture_coins": 0,
+                    "dye_pastel_pink": 0, "mb_dye_count": 0, "venture_coins": 0, "fc_gil": 0,
                     "current_job": "", "current_level": 0,
                     "highest_job": "", "highest_level": 0,
                     "lowest_job": "", "lowest_level": 0,
                     "all_jobs": {}, "all_currencies": {}, "completed_quests": [],
+                    "personal_estate": row[7] or "",
+                    "fc_estate": row[8] or "",
                 }
+                result[cid]["fc_gil"] = _read_fc_gil(row[9])
 
                 for item in _load_json_list(row[3]):
                     item_id = _read_int(item, "ItemId", "item_id")
@@ -1420,11 +1648,12 @@ def scan_xa_db(db_path):
             result[cid] = {
                 "treasure_value": 0, "coffer_dye_value": 0, "coffer_count": 0,
                 "dye_count": 0, "dye_pure_white": 0, "dye_jet_black": 0,
-                "dye_pastel_pink": 0, "mb_dye_count": 0, "venture_coins": 0,
+                "dye_pastel_pink": 0, "mb_dye_count": 0, "venture_coins": 0, "fc_gil": 0,
                 "current_job": "", "current_level": 0,
                 "highest_job": "", "highest_level": 0,
                 "lowest_job": "", "lowest_level": 0,
                 "all_jobs": {}, "all_currencies": {}, "completed_quests": [],
+                "personal_estate": "", "fc_estate": "",
             }
         
         # Build retainer_id -> content_id map
@@ -1840,6 +2069,7 @@ def get_all_data():
             # Get FC info and FC points
             fc_name = ""
             fc_points = 0
+            fc_gil = 0
             if cid in fc_data:
                 fc_name = fc_data[cid].get("Name", "")
                 fc_points = fc_data[cid].get("FCPoints", 0)
@@ -1873,6 +2103,7 @@ def get_all_data():
                 dye_pastel_pink = alto_map[cid].get("dye_pastel_pink", 0)
                 mb_dye_count = alto_map[cid].get("mb_dye_count", 0)
                 venture_coins = alto_map[cid].get("venture_coins", 0)
+                fc_gil = alto_map[cid].get("fc_gil", 0)
                 current_job = alto_map[cid].get("current_job", "")
                 current_level = alto_map[cid].get("current_level", 0)
                 highest_job = alto_map[cid].get("highest_job", "")
@@ -1907,7 +2138,8 @@ def get_all_data():
                 "region": region_from_world(char.get("World", "")),
                 "gil": char_gil,
                 "retainer_gil": retainer_gil,
-                "total_gil": char_gil + retainer_gil,
+                "fc_gil": fc_gil,
+                "total_gil": char_gil + retainer_gil + fc_gil,
                 "treasure_value": treasure_value,
                 "coffer_dye_value": coffer_dye_value,
                 "coffer_count": coffer_count,
@@ -1917,7 +2149,7 @@ def get_all_data():
                 "dye_pastel_pink": dye_pastel_pink,
                 "mb_dye_count": mb_dye_count,
                 "venture_coins": venture_coins,
-                "total_with_treasure": char_gil + retainer_gil + treasure_value,
+                "total_with_treasure": char_gil + retainer_gil + fc_gil + treasure_value,
                 "submarines": submarines,
                 "retainers": retainers,
                 "fc_name": fc_name,
@@ -3344,6 +3576,7 @@ HTML_TEMPLATE = '''
                                 <button class="filter-btn" id="global-coffers-btn" onclick="toggleFilterGlobal('coffers')" title="Show only characters with Coffers">📦</button>
                                 <button class="filter-btn" id="global-dyes-btn" onclick="toggleFilterGlobal('dyes')" title="Show only characters with Dyes">🎨</button>
                                 <button class="filter-btn" id="global-mb-btn" onclick="toggleFilterGlobal('mb')" title="Show only characters with MB Items">🪧</button>
+                                <button class="filter-btn" id="global-fc-gil-btn" onclick="toggleFilterGlobal('fc-gil')" title="Show only characters with FC Chest Gil">🧰</button>
                                 <button class="filter-btn" id="global-retainers-btn" onclick="toggleFilterGlobal('retainers')" title="Show only characters with Retainers">👤</button>
                                 <button class="filter-btn" id="global-treasure-btn" onclick="toggleFilterGlobal('treasure')" title="Show only characters with Treasure">💎</button>
                                 <button class="filter-btn" id="global-subs-btn" onclick="toggleFilterGlobal('subs')" title="Show only characters with Submarines">🚢</button>
@@ -3476,7 +3709,7 @@ HTML_TEMPLATE = '''
             {% else %}
             <div class="character-grid">
                 {% for char in account.characters %}
-                <div class="character-card{% if char.has_max_mb_retainer %} has-max-mb{% endif %}{% if char.has_idle_retainer and not char.retainers_sleeping %} has-idle-retainer{% endif %}{% if char.has_idle_sub and not char.subs_sleeping %} has-idle-sub{% endif %}{% if char.has_potential_retainer %} has-potential-retainer{% endif %}{% if char.has_potential_subs %} has-potential-subs{% endif %}" data-char="{{ char.cid }}" data-level="{{ char.current_level }}" data-lowest-level="{{ char.lowest_level }}" data-highest-level="{{ char.highest_level }}" data-gil="{{ char.total_gil }}" data-treasure="{{ char.treasure_value }}" data-fc-points="{{ char.fc_points }}" data-venture-coins="{{ char.venture_coins }}" data-coffers="{{ char.coffer_count }}" data-dyes="{{ char.dye_count }}" data-tanks="{{ char.ceruleum }}" data-kits="{{ char.repair_kits }}" data-restock="{{ char.days_until_restock if char.days_until_restock is not none else 9999 }}" data-retainers="{{ char.ready_retainers }}" data-total-retainers="{{ char.total_retainers }}" data-subs="{{ char.ready_subs }}" data-total-subs="{{ char.total_subs }}" data-inventory="{{ 140 - char.inventory_space }}" data-has-personal-house="{{ 'true' if char.private_house else 'false' }}" data-has-fc-house="{{ 'true' if char.fc_house else 'false' }}" data-retainer-level="{{ char.max_retainer_level }}" data-sub-level="{{ char.min_sub_level }}" data-retainer-return="{{ char.min_retainer_return }}" data-sub-return="{{ char.min_sub_return }}" data-msq-percent="{{ char.msq_percent }}" data-has-max-mb="{{ 'true' if char.has_max_mb_retainer else 'false' }}" data-mb="{{ char.mb_items }}" data-has-mb="{{ 'true' if char.mb_items > 0 else 'false' }}" data-has-coffers="{{ 'true' if char.coffer_count > 0 else 'false' }}" data-has-dyes="{{ 'true' if char.dye_count > 0 else 'false' }}" data-has-treasure="{{ 'true' if char.treasure_value > 0 else 'false' }}" data-region="{{ char.region }}" data-has-ready="{{ 'true' if (char.ready_retainers > 0 and not char.exclude_retainer and not char.retainers_sleeping) or (char.ready_subs > 0 and not char.exclude_workshop and not char.subs_sleeping) else 'false' }}" data-has-exclusion="{{ 'true' if char.exclude_retainer or char.exclude_workshop else 'false' }}" data-is-processing="{{ 'true' if char.is_processing else 'false' }}" data-has-sleeping="{{ 'true' if (char.retainers_sleeping and char.total_retainers > 0 and not char.exclude_retainer) or (char.subs_sleeping and char.total_subs > 0 and not char.exclude_workshop) else 'false' }}" data-has-idle="{{ 'true' if (char.has_idle_retainer and not char.retainers_sleeping) or (char.has_idle_sub and not char.subs_sleeping) else 'false' }}" data-has-potential-subs="{{ 'true' if char.has_potential_subs or char.has_potential_retainer else 'false' }}">
+                <div class="character-card{% if char.has_max_mb_retainer %} has-max-mb{% endif %}{% if char.has_idle_retainer and not char.retainers_sleeping %} has-idle-retainer{% endif %}{% if char.has_idle_sub and not char.subs_sleeping %} has-idle-sub{% endif %}{% if char.has_potential_retainer %} has-potential-retainer{% endif %}{% if char.has_potential_subs %} has-potential-subs{% endif %}" data-char="{{ char.cid }}" data-level="{{ char.current_level }}" data-lowest-level="{{ char.lowest_level }}" data-highest-level="{{ char.highest_level }}" data-gil="{{ char.total_gil }}" data-treasure="{{ char.treasure_value }}" data-fc-points="{{ char.fc_points }}" data-venture-coins="{{ char.venture_coins }}" data-coffers="{{ char.coffer_count }}" data-dyes="{{ char.dye_count }}" data-tanks="{{ char.ceruleum }}" data-kits="{{ char.repair_kits }}" data-restock="{{ char.days_until_restock if char.days_until_restock is not none else 9999 }}" data-retainers="{{ char.ready_retainers }}" data-total-retainers="{{ char.total_retainers }}" data-subs="{{ char.ready_subs }}" data-total-subs="{{ char.total_subs }}" data-inventory="{{ 140 - char.inventory_space }}" data-has-personal-house="{{ 'true' if char.private_house else 'false' }}" data-has-fc-house="{{ 'true' if char.fc_house else 'false' }}" data-has-fc-gil="{{ 'true' if char.fc_gil > 0 else 'false' }}" data-retainer-level="{{ char.max_retainer_level }}" data-sub-level="{{ char.min_sub_level }}" data-retainer-return="{{ char.min_retainer_return }}" data-sub-return="{{ char.min_sub_return }}" data-msq-percent="{{ char.msq_percent }}" data-has-max-mb="{{ 'true' if char.has_max_mb_retainer else 'false' }}" data-mb="{{ char.mb_items }}" data-has-mb="{{ 'true' if char.mb_items > 0 else 'false' }}" data-has-coffers="{{ 'true' if char.coffer_count > 0 else 'false' }}" data-has-dyes="{{ 'true' if char.dye_count > 0 else 'false' }}" data-has-treasure="{{ 'true' if char.treasure_value > 0 else 'false' }}" data-region="{{ char.region }}" data-has-ready="{{ 'true' if (char.ready_retainers > 0 and not char.exclude_retainer and not char.retainers_sleeping) or (char.ready_subs > 0 and not char.exclude_workshop and not char.subs_sleeping) else 'false' }}" data-has-exclusion="{{ 'true' if char.exclude_retainer or char.exclude_workshop else 'false' }}" data-is-processing="{{ 'true' if char.is_processing else 'false' }}" data-has-sleeping="{{ 'true' if (char.retainers_sleeping and char.total_retainers > 0 and not char.exclude_retainer) or (char.subs_sleeping and char.total_subs > 0 and not char.exclude_workshop) else 'false' }}" data-has-idle="{{ 'true' if (char.has_idle_retainer and not char.retainers_sleeping) or (char.has_idle_sub and not char.subs_sleeping) else 'false' }}" data-has-potential-subs="{{ 'true' if char.has_potential_subs or char.has_potential_retainer else 'false' }}">
                     <div class="character-header collapsed {% if (char.ready_retainers > 0 and not char.exclude_retainer and not char.retainers_sleeping) or (char.ready_subs > 0 and not char.exclude_workshop and not char.subs_sleeping) %}has-available{% endif %}" onclick="toggleCharacter(this)">
                         <div class="char-header-row name-row">
                             <span class="character-name">{{ char.name }}{% if char.current_level > 0 %} <span style="font-size: 0.8em; color: var(--text-secondary);">(Lv {{ char.current_level }}, {{ char.current_job }})</span>{% endif %}{% if show_msq_progression and char.msq_completed > 0 %} <span style="font-size: 0.8em; {% if char.msq_percent >= 90 %}color: #4ade80;{% elif char.msq_percent >= 50 %}color: #fbbf24;{% else %}color: #94a3b8;{% endif %}" title="MSQ Progress: {{ char.msq_completed }}/{{ char.msq_total }}{% if char.msq_quest_name %} - {{ char.msq_quest_name }}{% endif %}">MSQ: {{ char.msq_percent }}%</span>{% endif %}{% if char.private_house %} <span style="font-size: 0.8em;" title="Personal House: {{ char.private_house }}">🏠</span>{% endif %}{% if char.fc_house %} <span style="font-size: 0.8em;" title="FC House: {{ char.fc_house }}">🏨</span>{% endif %}</span>
@@ -3548,6 +3781,10 @@ HTML_TEMPLATE = '''
                         <div class="info-row">
                             <span class="info-label">Retainer Gil</span>
                             <span class="info-value">{{ "{:,}".format(char.retainer_gil) }}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">FC Gil</span>
+                            <span class="info-value" style="color: var(--accent-light);">{{ "{:,}".format(char.fc_gil) }}</span>
                         </div>
                         {% if char.treasure_value > 0 %}
                         <div class="info-row">
@@ -4544,7 +4781,7 @@ HTML_TEMPLATE = '''
                     if (label && value) {
                         const labelText = label.textContent;
                         const moneyLabels = [
-                            'Character Gil', 'Retainer Gil', 'Treasure Value', 'Coffer + Dye Value',
+                            'Character Gil', 'Retainer Gil', 'FC Gil', 'Treasure Value', 'Coffer + Dye Value',
                             'FC Points', 'Venture Coins', 'Coffers', 'Ceruleum Tanks', 'Repair Kits',
                             'Days Until Restock', 'Daily Income', 'Daily Cost'
                         ];
@@ -4873,6 +5110,7 @@ HTML_TEMPLATE = '''
             'coffers': false,
             'dyes': false,
             'mb': false,
+            'fc-gil': false,
             'retainers': false,
             'treasure': false,
             'subs': false,
@@ -4924,6 +5162,7 @@ HTML_TEMPLATE = '''
                     if (globalFilters['coffers'] && card.dataset.hasCoffers !== 'true') shouldShow = false;
                     if (globalFilters['dyes'] && card.dataset.hasDyes !== 'true') shouldShow = false;
                     if (globalFilters['mb'] && card.dataset.hasMb !== 'true') shouldShow = false;
+                    if (globalFilters['fc-gil'] && card.dataset.hasFcGil !== 'true') shouldShow = false;
                     if (globalFilters['retainers'] && parseInt(card.dataset.totalRetainers || 0) === 0) shouldShow = false;
                     if (globalFilters['treasure'] && card.dataset.hasTreasure !== 'true') shouldShow = false;
                     if (globalFilters['subs'] && parseInt(card.dataset.totalSubs || 0) === 0) shouldShow = false;
@@ -4951,6 +5190,7 @@ HTML_TEMPLATE = '''
                 'coffers': 'global-coffers-btn',
                 'dyes': 'global-dyes-btn',
                 'mb': 'global-mb-btn',
+                'fc-gil': 'global-fc-gil-btn',
                 'retainers': 'global-retainers-btn',
                 'treasure': 'global-treasure-btn',
                 'subs': 'global-subs-btn',
@@ -5189,9 +5429,11 @@ def get_map_data():
     """
     plot_list = []           # All individual plot entries
     district_ward_map = {}   # district -> ward -> [plot entries]
-    seen_fc_plots = set()    # Deduplicate FC plots by world+district+ward+plot (same as main page)
+    seen_fc_plots = {}       # Deduplicate FC plots by world+district+ward+plot (same as main page)
     no_fc_chars = []         # Characters not in any FC
     account_summaries = []   # Per-account capacity info
+    account_xa_maps = {}
+    xa_housing_size_lookup = {}
 
     # First pass: build global FC manager map across ALL accounts
     # Maps fc_key -> {name, account} for the first char with active subs per FC
@@ -5211,6 +5453,10 @@ def get_map_data():
         lfstrm_path = account.get("lfstrm_path", "")
         if lfstrm_path:
             pre_housing = load_lifestream_data(lfstrm_path)
+        xa_db_path = account.get("xa_db_path", "")
+        pre_alto_map = scan_xa_db(xa_db_path) if xa_db_path else {}
+        account_xa_maps[account["nickname"]] = pre_alto_map
+        xa_housing_size_lookup.update(build_xa_housing_size_lookup(pre_alto_map))
         for char in pre_characters:
             cid = char.get("CID", 0)
             if not bool(char.get("OfflineSubmarineData", [])):
@@ -5248,10 +5494,7 @@ def get_map_data():
         characters = collect_characters(data, account["nickname"])
 
         # Scan XA Database for highest_level
-        alto_map = {}
-        xa_db_path = account.get("xa_db_path", "")
-        if xa_db_path:
-            alto_map = scan_xa_db(xa_db_path)
+        alto_map = account_xa_maps.get(account["nickname"], {})
 
         # Load Lifestream housing
         housing_map = {}
@@ -5285,9 +5528,10 @@ def get_map_data():
             region = region_from_world(world)
 
             # Get highest level from XA Database
-            highest_level = 0
-            if cid in alto_map:
-                highest_level = alto_map[cid].get("highest_level", 0)
+            xa_snapshot = alto_map.get(cid, {})
+            highest_level = xa_snapshot.get("highest_level", 0)
+            if cid in housing_map:
+                housing_map[cid] = apply_xa_housing_sizes(housing_map[cid], xa_snapshot, xa_housing_size_lookup)
 
             # FC membership for capacity planner
             fc_name = ""
@@ -5400,9 +5644,13 @@ def get_map_data():
                         # Deduplicate FC plots by world+district+ward+plot (same as main page unique_fc_plots)
                         plot_key = f"{world}_{pd['district']}_W{pd['ward']}_P{pd['plot']}"
                         if plot_type == 'fc':
-                            if plot_key in seen_fc_plots:
-                                continue  # Skip duplicate FC plot (shared by multiple chars in same FC)
-                            seen_fc_plots.add(plot_key)
+                            existing_fc_entry = seen_fc_plots.get(plot_key)
+                            if existing_fc_entry:
+                                if not existing_fc_entry.get("size") and pd.get("size"):
+                                    existing_fc_entry["size"] = pd["size"]
+                                if not existing_fc_entry.get("fc_name") and fc_name:
+                                    existing_fc_entry["fc_name"] = fc_name
+                                continue
 
                         entry = {
                             "type": plot_type,
@@ -5411,10 +5659,14 @@ def get_map_data():
                             "plot": pd['plot'],
                             "world": world,
                             "region": region,
+                            "data_center": datacenter_from_world(world),
+                            "size": pd.get('size', ''),
                             "character": name,
                             "account": account["nickname"],
                             "fc_name": fc_name if plot_type == 'fc' else "",
                         }
+                        if plot_type == 'fc':
+                            seen_fc_plots[plot_key] = entry
                         plot_list.append(entry)
 
                         # Build district -> ward map
@@ -5494,17 +5746,15 @@ def get_map_data():
             remaining = limit - current
 
             # Per-world breakdown for this region
-            world_set = NA_WORLDS if reg == "NA" else EU_WORLDS if reg == "EU" else JP_WORLDS if reg == "JP" else OCE_WORLDS
             world_breakdown = []
-            for w in sorted(world_set):
-                w_title = w.title()
-                count = acc_world_counts.get(w_title, 0)
+            for world_name in REGION_WORLD_ORDER.get(reg, []):
+                count = acc_world_counts.get(world_name, 0)
                 if count > 0:
-                    w_in_fc = acc_world_fc_counts.get(w_title, 0)
-                    w_in_fc_no_subs = acc_world_fc_nosubs_counts.get(w_title, 0)
-                    w_excluded = acc_world_excluded_counts.get(w_title, 0)
+                    w_in_fc = acc_world_fc_counts.get(world_name, 0)
+                    w_in_fc_no_subs = acc_world_fc_nosubs_counts.get(world_name, 0)
+                    w_excluded = acc_world_excluded_counts.get(world_name, 0)
                     w_not_in_fc = count - w_in_fc - w_in_fc_no_subs - w_excluded
-                    world_breakdown.append({"world": w_title, "count": count, "in_fc": w_in_fc, "in_fc_no_subs": w_in_fc_no_subs, "not_in_fc": w_not_in_fc, "excluded": w_excluded, "max": MAX_CHARS_PER_WORLD, "remaining": MAX_CHARS_PER_WORLD - count, "chars": per_world_chars.get(w_title, [])})
+                    world_breakdown.append({"world": world_name, "count": count, "in_fc": w_in_fc, "in_fc_no_subs": w_in_fc_no_subs, "not_in_fc": w_not_in_fc, "excluded": w_excluded, "max": MAX_CHARS_PER_WORLD, "remaining": MAX_CHARS_PER_WORLD - count, "chars": per_world_chars.get(world_name, [])})
 
             region_capacity.append({
                 "region": reg,
@@ -5591,6 +5841,8 @@ def get_map_data():
             if w["total"] > max_ward_total:
                 max_ward_total = w["total"]
 
+    available_plot_regions = {p["region"] for p in plot_list if p.get("region")}
+
     return {
         "plots": plot_list,
         "district_summary": district_summary,
@@ -5609,7 +5861,8 @@ def get_map_data():
         "fc_coverage_pct": fc_coverage_pct,
         "max_ward_total": max_ward_total,
         "sub_planner_accounts": sub_planner_accounts,
-        "plot_regions": sorted(set(p["region"] for p in plot_list if p.get("region"))),
+        "plot_regions": [region for region in REGION_ORDER if region in available_plot_regions],
+        "plot_world_options": PLOT_WORLD_OPTIONS,
         "plot_account_names": sorted(set(p["account"] for p in plot_list if p.get("account"))),
         "last_updated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -5866,6 +6119,155 @@ MAP_TEMPLATE = '''
         }
         .view-toggle button.active { background: var(--accent); color: #fff; }
         .view-toggle button:hover:not(.active) { color: var(--text-primary); }
+        .plot-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 12px;
+            font-size: 0.8rem;
+        }
+        .plot-filter-label {
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .plot-filter-checkbox {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .plot-filter-checkbox input {
+            cursor: pointer;
+        }
+        .plot-filter-divider {
+            color: var(--text-secondary);
+            opacity: 0.65;
+        }
+        .plot-world-dropdown {
+            position: relative;
+            min-width: 260px;
+        }
+        .plot-world-select-btn {
+            min-width: 260px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 7px 10px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .plot-world-select-btn:hover,
+        .plot-world-dropdown.open .plot-world-select-btn {
+            border-color: var(--accent);
+            background: rgba(255,255,255,0.04);
+        }
+        .plot-world-selected-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-align: left;
+        }
+        .plot-world-menu {
+            display: none;
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            width: 320px;
+            max-height: 340px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px;
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+            z-index: 120;
+        }
+        .plot-world-menu.open {
+            display: block;
+        }
+        .plot-world-search {
+            width: 100%;
+            background: rgba(255,255,255,0.06);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 0.8rem;
+        }
+        .plot-world-search:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .plot-world-menu-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 8px;
+        }
+        .plot-world-action-btn {
+            background: rgba(255,255,255,0.06);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 0.76rem;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s, color 0.15s;
+        }
+        .plot-world-action-btn:hover:not(:disabled) {
+            border-color: var(--accent);
+            color: var(--text-primary);
+            background: rgba(255,255,255,0.09);
+        }
+        .plot-world-action-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .plot-world-options {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 8px;
+            max-height: 260px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+        .plot-world-option {
+            background: rgba(255,255,255,0.04);
+            color: var(--text-primary);
+            border: 1px solid transparent;
+            border-radius: 8px;
+            padding: 8px 10px;
+            text-align: left;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .plot-world-option:hover {
+            border-color: var(--accent);
+            background: rgba(255,255,255,0.07);
+        }
+        .plot-world-option.active {
+            border-color: var(--accent);
+            background: rgba(58, 122, 170, 0.18);
+        }
+        .plot-world-option-name {
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+        .plot-world-option-meta {
+            font-size: 0.72rem;
+            color: var(--text-secondary);
+        }
 
         /* FC Planner section */
         .planner-controls {
@@ -6066,11 +6468,23 @@ MAP_TEMPLATE = '''
 
         /* Sub Planner */
         .sub-planner-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            --sp-account-columns: 1;
+            --sp-char-column-width: 150px;
+            --sp-column-gap: 1px;
+            --sp-account-width: calc((var(--sp-account-columns) * var(--sp-char-column-width)) + ((var(--sp-account-columns) - 1) * var(--sp-column-gap)));
+            display: flex;
+            flex-wrap: wrap;
             gap: 6px;
+            align-items: flex-start;
+            justify-content: flex-start;
+            overflow-x: auto;
+            padding-bottom: 4px;
         }
         .sp-account {
+            flex: 0 0 var(--sp-account-width);
+            width: var(--sp-account-width);
+            min-width: var(--sp-account-width);
+            box-sizing: border-box;
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: 6px;
@@ -6092,11 +6506,18 @@ MAP_TEMPLATE = '''
             color: var(--text-secondary);
             font-size: 0.55rem;
         }
+        .sp-acc-body {
+            display: grid;
+            grid-template-columns: repeat(var(--sp-account-columns), var(--sp-char-column-width));
+            gap: var(--sp-column-gap);
+            background: rgba(255,255,255,0.05);
+        }
         .sp-char {
             padding: 2px 5px;
-            border-bottom: 1px solid rgba(255,255,255,0.04);
+            background: var(--bg-card);
+            min-width: 0;
+            box-sizing: border-box;
         }
-        .sp-char:last-child { border-bottom: none; }
         .sp-char-name {
             font-size: 0.6rem;
             font-weight: 600;
@@ -6180,6 +6601,39 @@ MAP_TEMPLATE = '''
         .sp-sort-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
         .sp-char.excluded { opacity: 0.35; }
         .sp-char.sleeping { opacity: 0.5; }
+        .sp-layout-control {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: auto;
+            font-size: 0.65rem;
+            color: var(--text-secondary);
+        }
+        .sp-layout-control span { white-space: nowrap; }
+        .sp-column-select {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            color-scheme: dark;
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .sp-column-select option {
+            background: #1b2340;
+            color: #f5f7ff;
+        }
+        .sp-column-select option:checked,
+        .sp-column-select option:hover,
+        .sp-column-select option:focus {
+            background: var(--accent);
+            color: #ffffff;
+        }
+        .sp-column-select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
         .fcdata-top-actions {
             display: flex;
             gap: 8px;
@@ -6312,20 +6766,52 @@ MAP_TEMPLATE = '''
         </div>
 
         {% if data.district_summary %}
-        <div class="plot-filters" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px;font-size:0.8rem;">
-            <span style="color:var(--text-secondary);font-weight:600;">Region:</span>
+        <div class="plot-filters">
+            <span class="plot-filter-label">Region:</span>
             <div class="view-toggle" id="region-plot-toggle">
                 <button class="active" onclick="setPlotRegion('all', this)">All</button>
                 {% for reg in data.plot_regions %}
                 <button onclick="setPlotRegion('{{ reg }}', this)">{{ reg }}</button>
                 {% endfor %}
             </div>
-            <span style="color:var(--text-secondary);font-weight:600;margin-left:8px;">Accounts:</span>
+            <span class="plot-filter-label">World:</span>
+            <div class="plot-world-dropdown" id="plot-world-dropdown">
+                <button type="button" class="plot-world-select-btn" onclick="togglePlotWorldMenu(event)">
+                    <span class="plot-world-selected-label" id="plot-world-selected-label">All Worlds</span>
+                    <span>▾</span>
+                </button>
+                <div class="plot-world-menu" id="plot-world-menu" onclick="event.stopPropagation()">
+                    <input type="text" id="plot-world-search" class="plot-world-search" placeholder="Search world, data center, region..." oninput="filterPlotWorldOptions()">
+                    <div class="plot-world-menu-actions">
+                        <button type="button" class="plot-world-action-btn" id="plot-world-clear-btn" onclick="clearSelectedPlotWorlds()" disabled>Clear Selected</button>
+                    </div>
+                    <div class="plot-world-options">
+                        {% for world in data.plot_world_options %}
+                        <button type="button" class="plot-world-option" data-world="{{ world.name }}" data-search="{{ world.search_text }}" onclick="selectPlotWorld('{{ world.name }}', this)">
+                            <span class="plot-world-option-name">{{ world.name }}</span>
+                            <span class="plot-world-option-meta">{{ world.data_center }} | {{ world.region }}</span>
+                        </button>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            <span class="plot-filter-label">Accounts:</span>
             {% for acc_name in data.plot_account_names %}
-            <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;color:var(--text-secondary);">
-                <input type="checkbox" checked onchange="filterPlots()" class="plot-acc-cb" value="{{ acc_name }}" style="cursor:pointer;"> {{ acc_name }}
+            <label class="plot-filter-checkbox">
+                <input type="checkbox" checked onchange="filterPlots()" class="plot-acc-cb" value="{{ acc_name }}"> {{ acc_name }}
             </label>
             {% endfor %}
+            <span class="plot-filter-divider">|</span>
+            <span class="plot-filter-label">Sizes:</span>
+            <label class="plot-filter-checkbox">
+                <input type="checkbox" checked onchange="filterPlots()" class="plot-size-cb" value="Small"> Small
+            </label>
+            <label class="plot-filter-checkbox">
+                <input type="checkbox" checked onchange="filterPlots()" class="plot-size-cb" value="Medium"> Medium
+            </label>
+            <label class="plot-filter-checkbox">
+                <input type="checkbox" checked onchange="filterPlots()" class="plot-size-cb" value="Large"> Large
+            </label>
         </div>
         <div class="district-grid">
             {% for dist_name, dist_data in data.district_summary.items() %}
@@ -6348,13 +6834,13 @@ MAP_TEMPLATE = '''
                             <span class="ward-label">W{{ ward_data.ward }}</span>
                             <div class="ward-plots">
                                 {% for plot in ward_data.plots %}
-                                <div class="plot-dot {{ plot.type }}" title="P{{ plot.plot }}" data-region="{{ plot.region }}" data-account="{{ plot.account }}">
+                                <div class="plot-dot {{ plot.type }}" title="P{{ plot.plot }}" data-region="{{ plot.region }}" data-account="{{ plot.account }}" data-world="{{ plot.world }}" data-size="{{ plot.size or '' }}">
                                     {{ plot.plot }}
                                     <div class="tooltip">
                                         <b class="fcdata-player-name" data-real-name="{{ plot.character }}">{{ plot.character }}</b><br>
                                         {{ dist_name }} W{{ ward_data.ward }} P{{ plot.plot }}<br>
-                                        {{ "FC" if plot.type == "fc" else "Personal" }}{% if plot.fc_name %} - {{ plot.fc_name }}{% endif %}<br>
-                                        <span style="color:var(--text-secondary)">{{ plot.world }} ({{ plot.account }})</span>
+                                        {{ "FC" if plot.type == "fc" else "Personal" }}{% if plot.size %} • {{ plot.size }}{% endif %}{% if plot.fc_name %} - {{ plot.fc_name }}{% endif %}<br>
+                                        <span style="color:var(--text-secondary)">{{ plot.world }}{% if plot.data_center %} | {{ plot.data_center }} | {{ plot.region }}{% endif %} ({{ plot.account }})</span>
                                     </div>
                                 </div>
                                 {% endfor %}
@@ -6442,14 +6928,25 @@ MAP_TEMPLATE = '''
             <button class="sp-sort-btn" onclick="sortSubPlanners('kits',this)" data-key="kits" data-dir="desc" title="Sort by repair kits">🔧 Kits ▼</button>
             <button class="sp-sort-btn" onclick="sortSubPlanners('restock',this)" data-key="restock" data-dir="asc" title="Sort by restock days">♻️ Restock ▲</button>
             <button class="sp-sort-btn" onclick="sortSubPlanners('inv',this)" data-key="inv" data-dir="desc" title="Sort by inventory slots">🎒 Inventory ▼</button>
+            <label class="sp-layout-control" for="sp-columns-select" title="How many character columns each account card should use">
+                <span>Cols/account</span>
+                <select id="sp-columns-select" class="sp-column-select" onchange="setSubPlannerColumns(this.value)">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                </select>
+            </label>
         </div>
-        <div class="sub-planner-grid">
+        <div id="sub-planner-grid" class="sub-planner-grid">
             {% for spa in data.sub_planner_accounts %}
             <div class="sp-account">
                 <div class="sp-acc-header">
                     <span>{{ spa.nickname }}</span>
                     <span class="sp-count">{{ spa.total_subs }} subs / {{ spa.total_chars }} chars</span>
                 </div>
+                <div class="sp-acc-body">
                 {% for ch in spa.characters %}
                 <div class="sp-char{% if ch.excluded %} excluded{% endif %}{% if ch.sleeping %} sleeping{% endif %}" data-subs="{{ ch.subs|length }}" data-maxlvl="{{ ch.subs|map(attribute='level')|max }}" data-tanks="{{ ch.tanks }}" data-kits="{{ ch.kits }}" data-restock="{{ ch.restock_days if ch.restock_days is not none else 9999 }}" data-inv="{{ ch.inventory }}">
                     <div class="sp-char-name fcdata-player-name" data-real-name="{{ ch.name }}" data-world="{{ ch.world }}" data-region="{{ ch.region }}" data-fc-name="{{ ch.fc_name }}" data-excluded="{{ 1 if ch.excluded else 0 }}" data-sleeping="{{ 1 if ch.sleeping else 0 }}" title="{{ ch.name }}@{{ ch.world }} ({{ ch.region }}){% if ch.fc_name %} — {{ ch.fc_name }}{% endif %}{% if ch.excluded %} [EXCLUDED]{% endif %}{% if ch.sleeping %} [SLEEPING]{% endif %}">
@@ -6472,6 +6969,7 @@ MAP_TEMPLATE = '''
                     </div>
                 </div>
                 {% endfor %}
+                </div>
             </div>
             {% endfor %}
         </div>
@@ -6621,8 +7119,39 @@ MAP_TEMPLATE = '''
         const accountData = {{ data.account_summaries | tojson }};
         const REGION_LIMITS = {"NA": 40, "EU": 40, "JP": 40, "OCE": 39};
         const MAX_PER_WORLD = 8;
+        const SUB_PLANNER_COLUMNS_KEY = 'fcdata-subplanner-columns';
+        const SUB_PLANNER_MIN_COLUMNS = 1;
+        const SUB_PLANNER_MAX_COLUMNS = 5;
 
         let currentPlotRegion = 'all';
+        const currentPlotWorlds = new Set();
+
+        function clampSubPlannerColumns(value) {
+            const parsed = parseInt(value, 10);
+            if (Number.isNaN(parsed)) {
+                return SUB_PLANNER_MIN_COLUMNS;
+            }
+            return Math.min(SUB_PLANNER_MAX_COLUMNS, Math.max(SUB_PLANNER_MIN_COLUMNS, parsed));
+        }
+
+        function applySubPlannerColumns(value) {
+            const columns = clampSubPlannerColumns(value);
+            const grid = document.getElementById('sub-planner-grid');
+            if (grid) {
+                grid.style.setProperty('--sp-account-columns', String(columns));
+                grid.dataset.columns = String(columns);
+            }
+            const select = document.getElementById('sp-columns-select');
+            if (select && select.value !== String(columns)) {
+                select.value = String(columns);
+            }
+            return columns;
+        }
+
+        function setSubPlannerColumns(value) {
+            const columns = applySubPlannerColumns(value);
+            localStorage.setItem(SUB_PLANNER_COLUMNS_KEY, String(columns));
+        }
 
         function setView(view, btn) {
             btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
@@ -6639,16 +7168,106 @@ MAP_TEMPLATE = '''
             filterPlots();
         }
 
+        function togglePlotWorldMenu(event) {
+            if (event) event.stopPropagation();
+            const dropdown = document.getElementById('plot-world-dropdown');
+            const menu = document.getElementById('plot-world-menu');
+            const searchInput = document.getElementById('plot-world-search');
+            if (!dropdown || !menu) return;
+            const nextOpen = !menu.classList.contains('open');
+            dropdown.classList.toggle('open', nextOpen);
+            menu.classList.toggle('open', nextOpen);
+            if (nextOpen && searchInput) {
+                searchInput.value = '';
+                filterPlotWorldOptions();
+                searchInput.focus();
+            }
+        }
+
+        function closePlotWorldMenu() {
+            const dropdown = document.getElementById('plot-world-dropdown');
+            const menu = document.getElementById('plot-world-menu');
+            if (dropdown) dropdown.classList.remove('open');
+            if (menu) menu.classList.remove('open');
+        }
+
+        function updatePlotWorldSelectionUI() {
+            const selectedWorlds = Array.from(currentPlotWorlds);
+            document.querySelectorAll('.plot-world-option').forEach(option => {
+                const worldName = option.getAttribute('data-world') || '';
+                option.classList.toggle('active', currentPlotWorlds.has(worldName));
+            });
+            const labelEl = document.getElementById('plot-world-selected-label');
+            if (labelEl) {
+                labelEl.textContent = selectedWorlds.length > 0 ? selectedWorlds.join(', ') : 'All Worlds';
+            }
+            const clearBtn = document.getElementById('plot-world-clear-btn');
+            if (clearBtn) {
+                clearBtn.disabled = selectedWorlds.length === 0;
+            }
+        }
+
+        function filterPlotWorldOptions() {
+            const searchInput = document.getElementById('plot-world-search');
+            const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+            document.querySelectorAll('.plot-world-option').forEach(option => {
+                const searchText = (option.getAttribute('data-search') || '').toLowerCase();
+                option.style.display = !query || searchText.includes(query) ? '' : 'none';
+            });
+        }
+
+        function selectPlotWorld(worldName, btn) {
+            if (!worldName) return;
+            if (currentPlotWorlds.has(worldName)) {
+                currentPlotWorlds.delete(worldName);
+            } else {
+                currentPlotWorlds.add(worldName);
+            }
+            if (btn) btn.blur();
+            updatePlotWorldSelectionUI();
+            filterPlots();
+        }
+
+        function clearSelectedPlotWorlds() {
+            if (currentPlotWorlds.size === 0) return;
+            currentPlotWorlds.clear();
+            updatePlotWorldSelectionUI();
+            filterPlots();
+        }
+
+        document.addEventListener('click', event => {
+            if (!event.target.closest('#plot-world-dropdown')) {
+                closePlotWorldMenu();
+            }
+        });
+
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                closePlotWorldMenu();
+            }
+        });
+
         function filterPlots() {
             const selRegion = currentPlotRegion;
+            const hasSelectedWorlds = currentPlotWorlds.size > 0;
             const checkedAccs = new Set();
             document.querySelectorAll('.plot-acc-cb:checked').forEach(cb => checkedAccs.add(cb.value));
+            const selectedSizes = new Set();
+            document.querySelectorAll('.plot-size-cb:checked').forEach(cb => selectedSizes.add(cb.value));
+            const totalSizeFilters = document.querySelectorAll('.plot-size-cb').length;
+            const allSizesSelected = selectedSizes.size === totalSizeFilters;
 
             // Filter dots
             document.querySelectorAll('.plot-dot').forEach(dot => {
                 const r = dot.getAttribute('data-region');
                 const a = dot.getAttribute('data-account');
-                const show = (selRegion === 'all' || r === selRegion) && checkedAccs.has(a);
+                const w = dot.getAttribute('data-world');
+                const s = dot.getAttribute('data-size') || '';
+                const show = (selRegion === 'all' || r === selRegion)
+                    && (!hasSelectedWorlds || currentPlotWorlds.has(w))
+                    && checkedAccs.has(a)
+                    && selectedSizes.size > 0
+                    && (allSizesSelected || selectedSizes.has(s));
                 dot.style.display = show ? '' : 'none';
             });
 
@@ -6710,9 +7329,13 @@ MAP_TEMPLATE = '''
         // Sub Planner sorting — store original DOM order on first load
         (function() {
             document.querySelectorAll('.sp-account').forEach(acc => {
-                const chars = Array.from(acc.querySelectorAll('.sp-char'));
+                const body = acc.querySelector('.sp-acc-body');
+                if (!body) return;
+                const chars = Array.from(body.querySelectorAll('.sp-char'));
                 chars.forEach((ch, i) => ch.setAttribute('data-orig', i));
             });
+            const savedColumns = localStorage.getItem(SUB_PLANNER_COLUMNS_KEY) || String(SUB_PLANNER_MIN_COLUMNS);
+            applySubPlannerColumns(savedColumns);
         })();
 
         function sortSubPlanners(key, btn) {
@@ -6736,7 +7359,9 @@ MAP_TEMPLATE = '''
             const dir = (btn && btn.dataset.dir === 'asc') ? 1 : -1;
 
             document.querySelectorAll('.sp-account').forEach(acc => {
-                const chars = Array.from(acc.querySelectorAll('.sp-char'));
+                const body = acc.querySelector('.sp-acc-body');
+                if (!body) return;
+                const chars = Array.from(body.querySelectorAll('.sp-char'));
                 chars.sort((a, b) => {
                     if (key === 'default') {
                         return parseInt(a.dataset.orig) - parseInt(b.dataset.orig);
@@ -6745,7 +7370,7 @@ MAP_TEMPLATE = '''
                     const bv = parseFloat(b.dataset[key]) || 0;
                     return (av - bv) * dir;
                 });
-                chars.forEach(ch => acc.appendChild(ch));
+                chars.forEach(ch => body.appendChild(ch));
             });
         }
 
@@ -6872,6 +7497,8 @@ MAP_TEMPLATE = '''
         // Initialize on load
         document.addEventListener('DOMContentLoaded', () => {
             applyFcDataPrivacy();
+            updatePlotWorldSelectionUI();
+            filterPlots();
             updatePlanner();
         });
     </script>
@@ -6908,6 +7535,14 @@ def get_subs_data():
         "total_ceruleum": 0,
         "total_kits": 0,
         "total_fc_points": 0,
+        "total_monthly_income": 0,
+        "total_monthly_cost": 0,
+        "total_net_daily": 0,
+        "total_net_monthly": 0,
+        "total_fc_tanks": 0,
+        "total_fc_stacks": 0.0,
+        "total_fc_tank_value": 0,
+        "unique_fc_count": 0,
     }
     
     for account in account_locations:
@@ -6942,6 +7577,9 @@ def get_subs_data():
             world = char.get("World", "Unknown")
             region = region_from_world(world)
             char_gil = char.get("Gil", 0)
+            exclude_retainer = char.get("ExcludeRetainer", False) if HONOR_AR_EXCLUSIONS else False
+            retainers = parse_retainer_data(char)
+            retainer_gil = sum(r["gil"] for r in retainers) if not exclude_retainer else 0
             ceruleum = char.get("Ceruleum", 0)
             repair_kits = char.get("RepairKits", 0)
             inventory_space = char.get("InventorySpace", 0)
@@ -6949,10 +7587,12 @@ def get_subs_data():
             
             # XA Database data
             treasure_value = 0
+            fc_gil = 0
             highest_level = 0
             highest_job = ""
             if cid in alto_map:
                 treasure_value = alto_map[cid].get("treasure_value", 0)
+                fc_gil = alto_map[cid].get("fc_gil", 0)
                 highest_level = alto_map[cid].get("highest_level", 0)
                 highest_job = alto_map[cid].get("highest_job", "")
             
@@ -7037,6 +7677,8 @@ def get_subs_data():
                 "char_level": highest_level,
                 "char_job": highest_job,
                 "gil": char_gil,
+                "retainer_gil": retainer_gil,
+                "fc_gil": fc_gil,
                 "ceruleum": ceruleum,
                 "repair_kits": repair_kits,
                 "inventory_space": inventory_space,
@@ -7424,29 +8066,31 @@ SUBS_TEMPLATE = r'''
                         <th onclick="sortTable(3, 'str')" data-col="3">Region <span class="sort-arrow">▲▼</span></th>
                         <th onclick="sortTable(4, 'num')" data-col="4">Lvl <span class="sort-arrow">▲▼</span></th>
                         <th onclick="sortTable(5, 'num')" data-col="5">Gil <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(6, 'num')" data-col="6">⛽ Tanks <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(7, 'num')" data-col="7">🔧 Kits <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(8, 'num')" data-col="8">♻️ Restock <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(9, 'num')" data-col="9">📦 Inv <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(10, 'num')" data-col="10">💎 Treasure <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(11, 'num')" data-col="11" class="sub-group-1">S1 Lvl <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(12, 'str')" data-col="12" class="sub-group-1">S1 Build <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(13, 'str')" data-col="13" class="sub-group-1">S1 Plan <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(14, 'str')" data-col="14" class="sub-group-1">S1 Return <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(15, 'num')" data-col="15" class="sub-group-2">S2 Lvl <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(16, 'str')" data-col="16" class="sub-group-2">S2 Build <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(17, 'str')" data-col="17" class="sub-group-2">S2 Plan <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(18, 'str')" data-col="18" class="sub-group-2">S2 Return <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(19, 'num')" data-col="19" class="sub-group-3">S3 Lvl <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(20, 'str')" data-col="20" class="sub-group-3">S3 Build <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(21, 'str')" data-col="21" class="sub-group-3">S3 Plan <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(22, 'str')" data-col="22" class="sub-group-3">S3 Return <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(23, 'num')" data-col="23" class="sub-group-4">S4 Lvl <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(24, 'str')" data-col="24" class="sub-group-4">S4 Build <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(25, 'str')" data-col="25" class="sub-group-4">S4 Plan <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(26, 'str')" data-col="26" class="sub-group-4">S4 Return <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(27, 'num')" data-col="27">💰 Daily <span class="sort-arrow">▲▼</span></th>
-                        <th onclick="sortTable(28, 'num')" data-col="28">🔧 Cost <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(6, 'num')" data-col="6">🛎️ Ret. Gil <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(7, 'num')" data-col="7">🧰 FC Gil <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(8, 'num')" data-col="8">💎 Treasure <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(9, 'num')" data-col="9">⛽ Tanks <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(10, 'num')" data-col="10">🔧 Kits <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(11, 'num')" data-col="11">♻️ Restock <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(12, 'num')" data-col="12">📦 Inv <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(13, 'num')" data-col="13" class="sub-group-1">S1 Lvl <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(14, 'str')" data-col="14" class="sub-group-1">S1 Build <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(15, 'str')" data-col="15" class="sub-group-1">S1 Plan <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(16, 'str')" data-col="16" class="sub-group-1">S1 Return <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(17, 'num')" data-col="17" class="sub-group-2">S2 Lvl <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(18, 'str')" data-col="18" class="sub-group-2">S2 Build <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(19, 'str')" data-col="19" class="sub-group-2">S2 Plan <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(20, 'str')" data-col="20" class="sub-group-2">S2 Return <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(21, 'num')" data-col="21" class="sub-group-3">S3 Lvl <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(22, 'str')" data-col="22" class="sub-group-3">S3 Build <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(23, 'str')" data-col="23" class="sub-group-3">S3 Plan <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(24, 'str')" data-col="24" class="sub-group-3">S3 Return <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(25, 'num')" data-col="25" class="sub-group-4">S4 Lvl <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(26, 'str')" data-col="26" class="sub-group-4">S4 Build <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(27, 'str')" data-col="27" class="sub-group-4">S4 Plan <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(28, 'str')" data-col="28" class="sub-group-4">S4 Return <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(29, 'num')" data-col="29">💰 Daily <span class="sort-arrow">▲▼</span></th>
+                        <th onclick="sortTable(30, 'num')" data-col="30">🔧 Cost <span class="sort-arrow">▲▼</span></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -7458,11 +8102,13 @@ SUBS_TEMPLATE = r'''
                         <td>{{ row.region }}</td>
                         <td>{{ row.char_level }}</td>
                         <td class="text-gold">{{ "{:,}".format(row.gil) }}</td>
+                        <td>{{ "{:,}".format(row.retainer_gil) }}</td>
+                        <td class="text-cyan">{{ "{:,}".format(row.fc_gil) }}</td>
+                        <td class="text-gold">{{ "{:,}".format(row.treasure_value) }}</td>
                         <td>{{ "{:,}".format(row.ceruleum) }}</td>
                         <td>{{ "{:,}".format(row.repair_kits) }}</td>
                         <td class="{% if row.days_until_restock is not none %}{% if row.days_until_restock < 7 %}restock-critical{% elif row.days_until_restock < 14 %}restock-warning{% else %}restock-ok{% endif %}{% endif %}">{% if row.days_until_restock is not none %}{{ row.days_until_restock }}d{% else %}-{% endif %}</td>
                         <td{% if row.inventory_space <= 10 %} class="text-danger"{% elif row.inventory_space <= 35 %} class="text-warning"{% endif %}>{{ row.inventory_space }}</td>
-                        <td class="text-gold">{{ "{:,}".format(row.treasure_value) }}</td>
                         {% for i in range(4) %}
                         {% if row.subs[i] %}
                         <td class="{% if row.subs[i].is_ready %}cell-ready{% endif %}">{{ row.subs[i].level }}</td>
@@ -7696,12 +8342,16 @@ CHARTS_TEMPLATE = '''
             <div class="value green">{{ "{:,}".format(data.daily_snapshots[-1].get('total_retainer_gil', 0)) }}</div>
         </div>
         <div class="summary-card">
+            <div class="label">FC Chest Gil</div>
+            <div class="value blue">{{ "{:,}".format(data.daily_snapshots[-1].get('total_fc_chest_gil', 0)) }}</div>
+        </div>
+        <div class="summary-card">
             <div class="label">Treasure Value</div>
             <div class="value gold">{{ "{:,}".format(data.daily_snapshots[-1].get('total_treasure_value', 0)) }}</div>
         </div>
         <div class="summary-card">
             <div class="label">Combined Total</div>
-            <div class="value blue">{{ "{:,}".format(data.daily_snapshots[-1].get('total_gil_plus_treasure', 0)) }}</div>
+            <div class="value">{{ "{:,}".format(data.daily_snapshots[-1].get('total_gil_plus_treasure', 0)) }}</div>
         </div>
         <div class="summary-card">
             <div class="label">Gil Earned (All Time)</div>
@@ -7725,7 +8375,7 @@ CHARTS_TEMPLATE = '''
 
     <div class="charts-area">
         <div class="chart-box full">
-            <h3>Total Wealth Over Time (Gil + Retainer Gil + Treasure)</h3>
+            <h3>Total Wealth Over Time (Character Gil + Retainer Gil + FC Chest Gil + Treasure)</h3>
             <div class="chart-wrap"><canvas id="wealthChart"></canvas></div>
         </div>
         <div class="chart-box">
@@ -7768,6 +8418,89 @@ CHARTS_TEMPLATE = '''
             }
         };
 
+        const compactMoneyTick = value => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return value;
+            const abs = Math.abs(num);
+            if (abs >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (abs >= 1000) return (num / 1000).toFixed(0) + 'k';
+            return num.toLocaleString();
+        };
+
+        const wholeNumberTick = value => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return value;
+            return Math.round(num).toLocaleString();
+        };
+
+        const decimalTick = value => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return value;
+            return num.toFixed(1);
+        };
+
+        function buildLinearAxis(position, tickCallback, drawOnChartArea = true) {
+            return {
+                type: 'linear',
+                position,
+                display: true,
+                ticks: {
+                    color: '#484f58',
+                    font: { size: 8 },
+                    callback: tickCallback,
+                    maxTicksLimit: 6
+                },
+                grid: {
+                    color: '#21262d',
+                    drawOnChartArea
+                }
+            };
+        }
+
+        function syncAxesWithDatasets(chart) {
+            Object.entries(chart.options.scales).forEach(([axisId, axisOptions]) => {
+                if (axisId === 'x') return;
+                const hasVisibleDataset = chart.data.datasets.some((dataset, index) => {
+                    const datasetAxisId = dataset.yAxisID || 'y';
+                    return datasetAxisId === axisId && chart.isDatasetVisible(index);
+                });
+                axisOptions.display = hasVisibleDataset;
+            });
+        }
+
+        const defaultLegendClick = Chart.defaults.plugins.legend.onClick;
+        function axisAwareLegendClick(event, legendItem, legend) {
+            defaultLegendClick(event, legendItem, legend);
+            const chart = legend.chart;
+            syncAxesWithDatasets(chart);
+            chart.update();
+        }
+
+        function createDualAxisLineChart(canvasId, datasets, leftTickCallback, rightTickCallback) {
+            const chart = new Chart(document.getElementById(canvasId), {
+                type: 'line',
+                data: { labels, datasets },
+                options: {
+                    ...chartDefaults,
+                    plugins: {
+                        ...chartDefaults.plugins,
+                        legend: {
+                            ...chartDefaults.plugins.legend,
+                            onClick: axisAwareLegendClick
+                        }
+                    },
+                    scales: {
+                        x: { ...chartDefaults.scales.x },
+                        y: buildLinearAxis('left', leftTickCallback),
+                        y1: buildLinearAxis('right', rightTickCallback, false)
+                    }
+                }
+            });
+            syncAxesWithDatasets(chart);
+            chart.update();
+            return chart;
+        }
+
         new Chart(document.getElementById('wealthChart'), {
             type: 'line',
             data: {
@@ -7775,6 +8508,7 @@ CHARTS_TEMPLATE = '''
                 datasets: [
                     { label: 'Character Gil', data: snapshots.map(s => s.total_character_gil || 0), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.15)', fill: true, tension: 0.3, pointRadius: 2 },
                     { label: 'Retainer Gil', data: snapshots.map(s => s.total_retainer_gil || 0), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.15)', fill: true, tension: 0.3, pointRadius: 2 },
+                    { label: 'FC Chest Gil', data: snapshots.map(s => s.total_fc_chest_gil || 0), borderColor: '#39c5cf', backgroundColor: 'rgba(57,197,207,0.15)', fill: true, tension: 0.3, pointRadius: 2 },
                     { label: 'Treasure Value', data: snapshots.map(s => s.total_treasure_value || 0), borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.15)', fill: true, tension: 0.3, pointRadius: 2 },
                     { label: 'Combined Total', data: snapshots.map(s => s.total_gil_plus_treasure || 0), borderColor: '#f0f6fc', backgroundColor: 'rgba(240,246,252,0)', fill: false, tension: 0.3, pointRadius: 2, borderWidth: 2, borderDash: [5, 3] }
                 ]
@@ -7782,67 +8516,54 @@ CHARTS_TEMPLATE = '''
             options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, stacked: false } } }
         });
 
-        new Chart(document.getElementById('earningsChart'), {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [
-                    { label: 'Gil Per Day', data: snapshots.map(s => s.total_gil_per_day), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 },
-                    { label: 'Supply Cost Per Day', data: snapshots.map(s => s.total_supply_cost_per_day), borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 }
-                ]
-            },
-            options: chartDefaults
-        });
+        createDualAxisLineChart('earningsChart', [
+            { label: 'Gil Per Day', data: snapshots.map(s => s.total_gil_per_day || 0), yAxisID: 'y', borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 },
+            { label: 'Supply Cost Per Day', data: snapshots.map(s => s.total_supply_cost_per_day || 0), yAxisID: 'y1', borderColor: '#f85149', backgroundColor: 'rgba(248,81,73,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 }
+        ], compactMoneyTick, compactMoneyTick);
 
+        const netProfitSeries = snapshots.map(s => (s.total_gil_per_day || 0) - (s.total_supply_cost_per_day || 0));
         new Chart(document.getElementById('profitChart'), {
-            type: 'bar',
+            type: 'line',
             data: {
                 labels,
                 datasets: [{
                     label: 'Net Profit',
-                    data: snapshots.map(s => s.total_gil_per_day - s.total_supply_cost_per_day),
-                    backgroundColor: snapshots.map(s => (s.total_gil_per_day - s.total_supply_cost_per_day) >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)'),
-                    borderRadius: 2
+                    data: netProfitSeries,
+                    borderColor: '#3fb950',
+                    backgroundColor: 'rgba(63,185,80,0.12)',
+                    fill: {
+                        target: 'origin',
+                        above: 'rgba(63,185,80,0.12)',
+                        below: 'rgba(248,81,73,0.12)'
+                    },
+                    tension: 0.3,
+                    pointRadius: 1.5,
+                    pointHoverRadius: 3,
+                    borderWidth: 1.5,
+                    pointBackgroundColor: netProfitSeries.map(v => v >= 0 ? '#3fb950' : '#f85149'),
+                    pointBorderColor: netProfitSeries.map(v => v >= 0 ? '#3fb950' : '#f85149'),
+                    segment: {
+                        borderColor: ctx => (ctx.p0.parsed.y < 0 || ctx.p1.parsed.y < 0) ? '#f85149' : '#3fb950'
+                    }
                 }]
             },
             options: chartDefaults
         });
 
-        new Chart(document.getElementById('subsChart'), {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: [
-                    { label: 'Farming', data: snapshots.map(s => s.total_subs_farming), backgroundColor: 'rgba(88,166,255,0.7)', borderRadius: 2 },
-                    { label: 'Leveling', data: snapshots.map(s => s.total_subs_leveling), backgroundColor: 'rgba(210,153,34,0.7)', borderRadius: 2 }
-                ]
-            },
-            options: { ...chartDefaults, scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v } } } }
-        });
+        createDualAxisLineChart('subsChart', [
+            { label: 'Farming Subs', data: snapshots.map(s => s.total_subs_farming || 0), yAxisID: 'y', borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 },
+            { label: 'Leveling Subs', data: snapshots.map(s => s.total_subs_leveling || 0), yAxisID: 'y1', borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 }
+        ], wholeNumberTick, wholeNumberTick);
 
-        new Chart(document.getElementById('supplyChart'), {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [
-                    { label: 'Ceruleum Tanks', data: snapshots.map(s => s.ceruleum_tank_inventory), borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 },
-                    { label: 'Repair Kits', data: snapshots.map(s => s.repair_kit_inventory), borderColor: '#8b949e', backgroundColor: 'rgba(139,148,158,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 }
-                ]
-            },
-            options: chartDefaults
-        });
+        createDualAxisLineChart('supplyChart', [
+            { label: 'Ceruleum Tanks', data: snapshots.map(s => s.ceruleum_tank_inventory || 0), yAxisID: 'y', borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 },
+            { label: 'Repair Kits', data: snapshots.map(s => s.repair_kit_inventory || 0), yAxisID: 'y1', borderColor: '#8b949e', backgroundColor: 'rgba(139,148,158,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 }
+        ], wholeNumberTick, wholeNumberTick);
 
-        new Chart(document.getElementById('consumptionChart'), {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [
-                    { label: 'Tanks/Day', data: snapshots.map(s => s.total_tanks_per_day), borderColor: '#d29922', tension: 0.3, pointRadius: 1, borderWidth: 1.5 },
-                    { label: 'Kits/Day', data: snapshots.map(s => s.total_kits_per_day), borderColor: '#8b949e', tension: 0.3, pointRadius: 1, borderWidth: 1.5 }
-                ]
-            },
-            options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v.toFixed(1) } } } }
-        });
+        createDualAxisLineChart('consumptionChart', [
+            { label: 'Tanks/Day', data: snapshots.map(s => s.total_tanks_per_day || 0), yAxisID: 'y', borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 },
+            { label: 'Kits/Day', data: snapshots.map(s => s.total_kits_per_day || 0), yAxisID: 'y1', borderColor: '#8b949e', backgroundColor: 'rgba(139,148,158,0.1)', fill: true, tension: 0.3, pointRadius: 1, borderWidth: 1.5 }
+        ], decimalTick, decimalTick);
 
         new Chart(document.getElementById('restockChart'), {
             type: 'line',

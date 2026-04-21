@@ -33,19 +33,16 @@
 # and AutoRetainer multi-mode auto-enabled
 # for full automation. 2FA is supported via keyring integration. See README.md for complete setup instructions.
 #
-# Auto-AutoRetainer v1.36
+# Auto-AutoRetainer v1.38
 # Automated FFXIV Submarine Management System
 # Created by: https://github.com/xa-io
-# Last Updated: 2026-04-06 16:00:00
+# Last Updated: 2026-04-15 11:00:00
 #
 # ## Release Notes This Update ##
 #
-# v1.36 - Supports XA Slave window titles with optional character-name suffixes
-#         Preserves PID/nickname account matching when the live character name is appended
-#         Legacy window layout regex rules still match the base PID/nickname title
-# v1.35 - Force-close monitoring now pauses during AutoRetainer vessel-wait windows
-#         Respects DisableRetainerVesselReturn on the most recently processed character
-#         Prevents false force-crashes while AR intentionally waits for the next submarine
+# v1.38 - Dynamic-grid window movement now ignores accounts disabled in config.json
+#         Stats/runtime account loading already honored enabled=false; window movement now matches that behavior
+#         Disabled account windows can stay open without being rearranged by Auto-AutoRetainer
 #
 ########################################################################################################################
 
@@ -89,7 +86,7 @@ except ImportError:
 # ===============================================
 # Configuration Parameters
 # ===============================================
-VERSION = "v1.36"     # Current script version
+VERSION = "v1.38"     # Current script version
 VERSION_SUFFIX = ""     # Custom text appended to version display (set via config.json, e.g., " - Main")
 
 # Display settings
@@ -131,6 +128,7 @@ MAX_CLIENTS = 0                 # Maximum concurrent running game clients allowe
 ENABLE_WINDOW_LAYOUT = False                 # Enable automatic positioning/sizing of game windows after launch (requires window layout JSON files)
 WINDOW_LAYOUT = "main"                       # Which layout configuration to use: "left" (window_layout_left) or "main" (window_layout_main)
 WINDOW_MOVER_DIR = Path(__file__).parent     # Directory containing window layout JSON files (windows_layout_left.json / windows_layout_main.json)
+DISABLE_GRID = False                         # If True: use fixed positions from config (legacy mode). If False: use dynamic grid placement (windows fill positions 1-8 sequentially)
 MAX_WINDOW_MOVE_ATTEMPTS = 3                 # Maximum number of window move attempts per client (1-3 recommended, prevents script freeze on unresponsive windows)
 WINDOW_MOVE_VERIFICATION_DELAY = 1           # Seconds to wait after window move before verifying position (allows window to settle)
 MAX_FAILED_FORCE_CRASH = True                # Force crash client after MAX_WINDOW_MOVE_ATTEMPTS failures (script will relaunch on next cycle if game should be running)
@@ -494,7 +492,7 @@ def load_external_config():
     global ENABLE_AUTO_CLOSE, AUTO_CLOSE_THRESHOLD, MAX_RUNTIME, FORCE_CRASH_INACTIVITY_MINUTES, FORCE_CRASH_RETAINER_MINUTES
     global ENABLE_AUTO_LAUNCH, OTP_LAUNCH_DELAY, AUTO_LAUNCH_THRESHOLD, OPEN_DELAY_THRESHOLD
     global WINDOW_TITLE_RESCAN, MAX_WINDOW_TITLE_RESCAN, FORCE_LAUNCHER_RETRY, ENABLE_AUTOLOGIN_UPDATER, MAX_CLIENTS
-    global ENABLE_WINDOW_LAYOUT, WINDOW_LAYOUT, WINDOW_MOVER_DIR, MAX_WINDOW_MOVE_ATTEMPTS
+    global ENABLE_WINDOW_LAYOUT, WINDOW_LAYOUT, WINDOW_MOVER_DIR, DISABLE_GRID, MAX_WINDOW_MOVE_ATTEMPTS
     global WINDOW_MOVE_VERIFICATION_DELAY, MAX_FAILED_FORCE_CRASH
     global DEBUG, ENABLE_LOGGING, LOG_FILE, SYSTEM_BOOTUP_DELAY, USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME
     global ENABLE_PUSHOVER, PUSHOVER_USER_KEY, PUSHOVER_API_TOKEN
@@ -551,6 +549,7 @@ def load_external_config():
     MAX_CLIENTS = cfg("MAX_CLIENTS", MAX_CLIENTS)
     ENABLE_WINDOW_LAYOUT = cfg("ENABLE_WINDOW_LAYOUT", ENABLE_WINDOW_LAYOUT)
     WINDOW_LAYOUT = cfg("WINDOW_LAYOUT", WINDOW_LAYOUT)
+    DISABLE_GRID = cfg("DISABLE_GRID", DISABLE_GRID)
     MAX_WINDOW_MOVE_ATTEMPTS = cfg("MAX_WINDOW_MOVE_ATTEMPTS", MAX_WINDOW_MOVE_ATTEMPTS)
     WINDOW_MOVE_VERIFICATION_DELAY = cfg("WINDOW_MOVE_VERIFICATION_DELAY", WINDOW_MOVE_VERIFICATION_DELAY)
     MAX_FAILED_FORCE_CRASH = cfg("MAX_FAILED_FORCE_CRASH", MAX_FAILED_FORCE_CRASH)
@@ -1890,15 +1889,10 @@ def verify_window_position(hwnd, expected_x, expected_y, expected_w, expected_h,
     
     return x_match and y_match
 
-def move_window_to_position(hwnd, x, y, w, h, topmost=False, activate=False):
+def move_window_to_position(hwnd, x, y, w=None, h=None, topmost=False, activate=False):
     try:
         # Get current window style
         style = win32gui.GetWindowLong(hwnd, GWL_STYLE)
-        
-        # Remove styles that might prevent resizing (WS_MAXIMIZEBOX = 0x00010000, WS_THICKFRAME = 0x00040000)
-        # But keep other important styles
-        new_style = style | 0x00040000  # Ensure WS_THICKFRAME (resizable border) is set
-        win32gui.SetWindowLong(hwnd, GWL_STYLE, new_style)
         
         # Set topmost state
         insert_after = HWND_TOPMOST if topmost else HWND_NOTOPMOST
@@ -1909,12 +1903,22 @@ def move_window_to_position(hwnd, x, y, w, h, topmost=False, activate=False):
         SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | flags)
         time.sleep(0.05)
         
-        # Use MoveWindow for more direct resize control
-        win32gui.MoveWindow(hwnd, x, y, w, h, True)  # True = repaint
-        time.sleep(0.1)  # Give more time for resize to take effect
-        
-        # Restore original style
-        win32gui.SetWindowLong(hwnd, GWL_STYLE, style)
+        # Only resize if width/height provided, otherwise just move
+        if w is not None and h is not None:
+            # Remove styles that might prevent resizing
+            new_style = style | 0x00040000  # Ensure WS_THICKFRAME (resizable border) is set
+            win32gui.SetWindowLong(hwnd, GWL_STYLE, new_style)
+            
+            # Use MoveWindow for resize control
+            win32gui.MoveWindow(hwnd, x, y, w, h, True)  # True = repaint
+            time.sleep(0.1)
+            
+            # Restore original style
+            win32gui.SetWindowLong(hwnd, GWL_STYLE, style)
+        else:
+            # Just move without resizing
+            SetWindowPos(hwnd, HWND_TOP, x, y, 0, 0, SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOSIZE)
+            time.sleep(0.05)
         
         # Force redraw
         win32gui.RedrawWindow(hwnd, None, None, 0x0001 | 0x0004)
@@ -1925,6 +1929,11 @@ def move_window_to_position(hwnd, x, y, w, h, topmost=False, activate=False):
 def arrange_ffxiv_windows():
     """
     Arrange all FFXIV game windows according to the configured layout.
+    
+    If DISABLE_GRID is True: Uses fixed positions from config (legacy mode).
+    If DISABLE_GRID is False: Uses dynamic grid placement - windows fill positions
+    sequentially based on which accounts are actually open, maintaining compact grid layout.
+    
     Includes responsiveness checking, retry logic, and position verification.
     """
     layout = read_window_layout_config()
@@ -1933,30 +1942,97 @@ def arrange_ffxiv_windows():
     
     if DEBUG:
         print(f"\n[WINDOW-MOVER] Arranging windows with '{WINDOW_LAYOUT}' layout...")
-    
-    # Compile regexes
-    rules = []
-    for rule in layout.get("rules", []):
-        rx = re.compile(rule["title_regex"], re.IGNORECASE)
-        rules.append((rx, rule))
-    rules.sort(key=lambda r: r[1].get("order", 0))
+        if DISABLE_GRID:
+            print("[WINDOW-MOVER] Using legacy fixed-position mode (DISABLE_GRID=True)")
+        else:
+            print("[WINDOW-MOVER] Using dynamic grid placement mode (DISABLE_GRID=False)")
     
     windows = find_all_windows()
     
-    # Match windows to rules
-    assigned = []
-    for rx, rule in rules:
+    if DISABLE_GRID:
+        # Legacy mode: Match windows directly to config rules (fixed positions)
+        rules = []
+        for rule in layout.get("rules", []):
+            rx = re.compile(rule["title_regex"], re.IGNORECASE)
+            rules.append((rx, rule))
+        rules.sort(key=lambda r: r[1].get("order", 0))
+        
+        assigned = []
+        for rx, rule in rules:
+            for hwnd, title in windows:
+                normalized_title = normalize_window_title_for_layout_matching(title)
+                if rx.match(title) or (normalized_title != title and rx.match(normalized_title)):
+                    assigned.append((rule, hwnd, title))
+                    windows = [(h, t) for (h, t) in windows if h != hwnd]
+                    break
+    else:
+        # Dynamic grid mode: Parse config and fill positions sequentially
+        account_order, grid_positions = parse_config_rules(layout)
+        
+        if not account_order:
+            if DEBUG:
+                print(f"[WINDOW-MOVER] No valid rules found in layout config")
+            return False
+        
+        # Find all FFXIV windows matching pattern: "PID - nickname" or "PID - nickname - Character"
+        ffxiv_pattern = re.compile(r"^\d+\s+-\s+.+$", re.IGNORECASE)
+        
+        # Collect all FFXIV windows with their nicknames. Only enabled accounts
+        # from config should participate in automatic window arrangement.
+        enabled_account_nicknames = {acc["nickname"] for acc in account_locations}
+        ffxiv_windows = []
+        skipped_disabled_windows = []
         for hwnd, title in windows:
             normalized_title = normalize_window_title_for_layout_matching(title)
-            if rx.match(title) or (normalized_title != title and rx.match(normalized_title)):
-                assigned.append((rule, hwnd, title))
-                windows = [(h, t) for (h, t) in windows if h != hwnd]
-                break
-    
-    if not assigned:
+            if ffxiv_pattern.match(normalized_title):
+                nickname = extract_nickname_from_title(title)
+                if nickname:
+                    if nickname not in enabled_account_nicknames:
+                        skipped_disabled_windows.append(title)
+                        continue
+                    ffxiv_windows.append({
+                        "hwnd": hwnd,
+                        "title": title,
+                        "nickname": nickname,
+                        "priority": get_account_priority(nickname, account_order)
+                    })
+
+        if DEBUG and skipped_disabled_windows:
+            print(f"[WINDOW-MOVER] Ignoring {len(skipped_disabled_windows)} disabled-account window(s)")
+            for title in skipped_disabled_windows:
+                print(f"  Skipped: {title}")
+        
+        # Sort by priority (config order)
+        ffxiv_windows.sort(key=lambda w: w["priority"])
+        
+        # Limit to available grid positions
+        ffxiv_windows = ffxiv_windows[:len(grid_positions)]
+        
+        if not ffxiv_windows:
+            if DEBUG:
+                print(f"[WINDOW-MOVER] No FFXIV windows found to arrange")
+            return False
+        
         if DEBUG:
-            print(f"[WINDOW-MOVER] No FFXIV windows found to arrange")
-        return False
+            print(f"[WINDOW-MOVER] Found {len(ffxiv_windows)} FFXIV window(s):")
+            for i, win in enumerate(ffxiv_windows, 1):
+                print(f"  Position {i}: {win['title']} (nickname: {win['nickname']})")
+        
+        # Build assigned list with grid positions from config
+        assigned = []
+        for i, win in enumerate(ffxiv_windows):
+            if i < len(grid_positions):
+                pos = grid_positions[i]
+                rule = {
+                    "x": pos["x"],
+                    "y": pos["y"],
+                    "width": pos["width"],
+                    "height": pos["height"],
+                    "topmost": pos.get("topmost", False),
+                    "activate": pos.get("activate", True),
+                    "order": 80 - (i * 10)
+                }
+                assigned.append((rule, win["hwnd"], win["title"]))
     
     # Track successful and failed moves
     successful_moves = []
@@ -1966,8 +2042,9 @@ def arrange_ffxiv_windows():
     for rule, hwnd, title in assigned:
         x = int(rule["x"])
         y = int(rule["y"])
-        w = int(rule["width"])
-        h = int(rule["height"])
+        # Only resize if width/height specified in config
+        w = int(rule["width"]) if rule.get("width") is not None else None
+        h = int(rule["height"]) if rule.get("height") is not None else None
         activate = bool(rule.get("activate", False))
         
         move_success = False
@@ -1991,9 +2068,12 @@ def arrange_ffxiv_windows():
                 # Wait for window to settle
                 time.sleep(WINDOW_MOVE_VERIFICATION_DELAY)
                 
-                # Verify window moved correctly
-                if verify_window_position(hwnd, x, y, w, h):
-                    print(f"[WINDOW-MOVER] SUCCESS: Moved '{title}' -> ({x},{y},{w},{h}) on attempt {attempt}")
+                # Verify window moved correctly (pass 0,0 for size if not resizing)
+                verify_w = w if w is not None else 0
+                verify_h = h if h is not None else 0
+                if verify_window_position(hwnd, x, y, verify_w, verify_h):
+                    size_info = f" {w}x{h}" if w and h else ""
+                    print(f"[WINDOW-MOVER] SUCCESS: Moved '{title}' -> ({x},{y}){size_info} on attempt {attempt}")
                     successful_moves.append((hwnd, title))
                     move_success = True
                     break
@@ -2060,6 +2140,23 @@ def arrange_ffxiv_windows():
             print(f"[WINDOW-MOVER]   Failed: '{title}' - {reason}")
     
     return len(successful_moves) > 0
+
+def compact_dynamic_window_grid_after_auto_close():
+    """
+    Wait briefly after an AUTO_CLOSE_THRESHOLD shutdown, then compact the
+    remaining windows only when dynamic grid mode is active.
+    """
+    if USE_SINGLE_CLIENT_FFIXV_NO_NICKNAME or not ENABLE_WINDOW_LAYOUT:
+        return False
+
+    # DISABLE_GRID=True uses legacy fixed positions, which intentionally keep
+    # account slots stable instead of compacting the grid.
+    if DISABLE_GRID:
+        return False
+
+    print("[AUTO-CLOSE] Waiting 3 seconds for the closed client to exit before compacting the dynamic grid...")
+    time.sleep(3)
+    return arrange_ffxiv_windows()
 
 def kill_process_by_pid(pid, error_tag="PROCESS"):
     """
@@ -2533,6 +2630,55 @@ def normalize_window_title_for_layout_matching(title):
     if re.match(r"^\d+\s-\s.+\s-\s.+$", normalized_title):
         return normalized_title.rsplit(" - ", 1)[0]
     return normalized_title
+
+
+def extract_nickname_from_title(title):
+    """Extract the nickname from window title like '1234 - Acc1' or '1234 - Acc1 - Character'."""
+    normalized = normalize_window_title_for_layout_matching(title.strip())
+    # Pattern: PID - nickname
+    match = re.match(r"^\d+\s+-\s+(.+)$", normalized, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def parse_config_rules(layout):
+    """
+    Parse config file to extract account priority order and grid positions.
+    Returns tuple: (account_order, grid_positions)
+    - account_order: list of nicknames in order from config rules
+    - grid_positions: list of dicts with x, y, width, height for each position
+    """
+    account_order = []
+    grid_positions = []
+    
+    for rule in layout.get("rules", []):
+        # Extract nickname from title_regex like "^\\d+\\s-\\sAcc1$" (JSON)
+        # After JSON parsing becomes: ^\d+\s-\sAcc1$
+        regex = rule.get("title_regex", "")
+        # Match pattern: ^\d+\s-\s(nickname)$
+        match = re.search(r"^\^?\\d\+\\s-\\s(.+?)\$?$", regex, re.IGNORECASE)
+        if match:
+            nickname = match.group(1)
+            account_order.append(nickname)
+            grid_positions.append({
+                "x": rule.get("x", 0),
+                "y": rule.get("y", 0),
+                "width": rule.get("width"),  # No default - only resize if specified
+                "height": rule.get("height"),  # No default - only resize if specified
+                "topmost": rule.get("topmost", False),
+                "activate": rule.get("activate", True)
+            })
+    
+    return account_order, grid_positions
+
+
+def get_account_priority(nickname, account_order):
+    """Get the priority for a nickname based on config order. Unknown nicknames go to end."""
+    try:
+        return account_order.index(nickname)
+    except ValueError:
+        return 999  # Unknown accounts go to the end
 
 
 def is_ffxiv_running_for_account(nickname):
@@ -4034,13 +4180,15 @@ def main():
                     if soonest_hours is not None and soonest_hours > AUTO_CLOSE_THRESHOLD:
                         print(f"\n[AUTO-CLOSE] Closing {nickname} (PID: {process_id}) - Next sub in {soonest_hours:.1f}h")
                         
-                        kill_game_client_and_cleanup(
+                        close_success = kill_game_client_and_cleanup(
                             nickname, process_id,
                             f"[AUTO-CLOSE] Successfully closed {nickname}, waiting {TIMER_REFRESH_INTERVAL} seconds before checking clients again.",
                             f"[AUTO-CLOSE] Failed to close {nickname}",
                             closed_pids, game_status_dict, client_start_times,
                             last_launch_time=last_launch_time
                         )
+                        if close_success:
+                            compact_dynamic_window_grid_after_auto_close()
             
             # Force crash timer - check for frozen/stuck clients
             # Only run force-crash monitoring if ENABLE_AUTO_CLOSE is True
